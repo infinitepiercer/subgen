@@ -70,6 +70,17 @@ _NON_ALPHA_RE = re.compile(r'[^a-zA-Z]')
 # Single character repeated (e.g. "aaaaaa", "......")
 _SINGLE_CHAR_REPEAT_RE = re.compile(r'^(.)\1+$')
 
+# CJK Unified Ideographs + Hiragana + Katakana + Hangul + CJK symbols
+_CJK_RE = re.compile(
+    r'[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff'
+    r'\uac00-\ud7af\uff00-\uffef]'
+)
+
+# Languages that legitimately use CJK / non-Latin characters
+_CJK_LANGUAGES: set[str] = {
+    'zh', 'ja', 'ko', 'chinese', 'japanese', 'korean',
+}
+
 # Metadata line injected by appendLine() — must never be filtered
 _METADATA_MARKER = "transcribed by whisperai with faster-whisper"
 
@@ -90,6 +101,11 @@ def filter_segments(result) -> int:
     Returns:
         Number of segments removed.
     """
+    # Detect whether the result language uses Latin script — if so,
+    # CJK characters in segments are almost certainly hallucinations.
+    result_lang = getattr(result, 'language', '') or ''
+    expect_latin = result_lang.lower() not in _CJK_LANGUAGES
+
     segments = result.segments
     removed = 0
 
@@ -97,7 +113,7 @@ def filter_segments(result) -> int:
         seg = segments[i]
         text: str = seg.text.strip()
 
-        reason = _check_segment(text)
+        reason = _check_segment(text, expect_latin)
         if reason is not None:
             logger.debug(
                 "Filtered segment #%d [%.2f-%.2f] (%s): %r",
@@ -117,7 +133,7 @@ def filter_segments(result) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _check_segment(text: str) -> str | None:
+def _check_segment(text: str, expect_latin: bool = True) -> str | None:
     """Return a reason string if *text* should be filtered, else ``None``."""
 
     # --- Safety: never filter the metadata line ---
@@ -139,6 +155,11 @@ def _check_segment(text: str) -> str | None:
     # Single repeated character (e.g. "aaaaaa")
     if _SINGLE_CHAR_REPEAT_RE.match(stripped):
         return "single_char_repeat"
+
+    # --- Foreign-script hallucination ---
+    # When the result language is Latin-script, CJK characters are hallucinated.
+    if expect_latin and _CJK_RE.search(text):
+        return "foreign_script_hallucination"
 
     # --- Hallucination detection ---
 
