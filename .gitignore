@@ -9,4 +9,6 @@
 #ignore our settings
 subgen.env
 
-models/
+/models/
+!subgen/models/
+__pycache__/
