@@ -5,6 +5,56 @@ import numpy as np
 from language_code import LanguageCode
 
 
+def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
+    """Normalize audio loudness using ffmpeg's loudnorm filter (EBU R128).
+
+    Brings quiet audio up and loud audio down to a consistent level (-16 LUFS,
+    slightly louder than broadcast standard) to improve Whisper transcription
+    accuracy.  Does NOT modify the original file — returns normalized WAV bytes.
+
+    Args:
+        audio_input: File path (str) or raw audio bytes.
+        is_file_path: True if audio_input is a file path, False if bytes.
+
+    Returns:
+        Normalized audio as WAV bytes (16kHz mono PCM s16le).
+    """
+    try:
+        if is_file_path:
+            input_stream = ffmpeg.input(audio_input)
+            run_kwargs = {}
+        else:
+            input_stream = ffmpeg.input('pipe:0')
+            run_kwargs = {'input': audio_input}
+
+        out, _ = (
+            input_stream
+            .output(
+                'pipe:1',
+                format='wav',
+                acodec='pcm_s16le',
+                ar=16000,
+                ac=1,
+                af='loudnorm=I=-16:TP=-1.5:LRA=11',
+            )
+            .run(capture_stdout=True, capture_stderr=True, **run_kwargs)
+        )
+
+        if not out:
+            logging.warning("Audio normalization produced empty output, using original audio")
+            return audio_input if not is_file_path else None
+
+        logging.debug("Audio normalized successfully (%d bytes)", len(out))
+        return out
+
+    except ffmpeg.Error as e:
+        logging.warning("Audio normalization failed: %s — using original audio", e.stderr.decode() if e.stderr else str(e))
+        return audio_input if not is_file_path else None
+    except Exception as e:
+        logging.warning("Audio normalization failed: %s — using original audio", e)
+        return audio_input if not is_file_path else None
+
+
 async def get_audio_chunk(audio_file, offset=None, length=None, sample_rate=16000, audio_format=np.int16):
     """
     Extract a chunk of audio from a file, starting at the given offset and of the given length.

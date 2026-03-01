@@ -14,6 +14,7 @@ from subgen.config import (
     limit_to_preferred_audio_languages,
     min_subtitle_duration,
     namesublang,
+    normalize_audio as normalize_audio_enabled,
     only_skip_if_subgen_subtitle,
     preferred_audio_languages,
     should_whiser_detect_audio_language,
@@ -86,14 +87,22 @@ def strip_pad_from_regroup(regroup: str) -> tuple[str, float, float]:
 
 
 def apply_pad(result, start_pad: float, end_pad: float) -> None:
-    """Apply padding to subtitle segments (workaround for stable-ts pad bug)."""
+    """Apply padding to subtitle segments (workaround for stable-ts pad bug).
+
+    Allows overlapping with the next segment (players stack them on screen).
+    Caps at the next segment's *end* to prevent truly reversed ordering.
+    """
     if start_pad == 0.0 and end_pad == 0.0:
         return
-    for segment in result.segments:
+    segments = result.segments
+    for i, segment in enumerate(segments):
         if start_pad > 0:
             segment.start = max(0, segment.start - start_pad)
         if end_pad > 0:
-            segment.end = segment.end + end_pad
+            desired_end = segment.end + end_pad
+            if i + 1 < len(segments):
+                desired_end = min(desired_end, segments[i + 1].end)
+            segment.end = desired_end
 
 
 # ---------------------------------------------------------------------------
@@ -107,14 +116,19 @@ def enforce_min_subtitle_duration(result, min_duration: float) -> None:
     Modifies *result* in place.  Any segment whose duration is less than
     *min_duration* (seconds) gets its end time pushed out.  Overlapping with
     the next segment is intentional — media players stack overlapping SRT
-    entries on screen, which is exactly the desired behaviour.
+    entries on screen.  Capped at the next segment's *end* to prevent truly
+    reversed ordering.
     """
     if min_duration <= 0:
         return
-    for segment in result.segments:
+    segments = result.segments
+    for i, segment in enumerate(segments):
         duration = segment.end - segment.start
         if duration < min_duration:
-            segment.end = segment.start + min_duration
+            desired_end = segment.start + min_duration
+            if i + 1 < len(segments):
+                desired_end = min(desired_end, segments[i + 1].end)
+            segment.end = desired_end
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +367,14 @@ def gen_subtitles(
         if extracted_audio_file:
             data = extracted_audio_file
 
+        # Normalize audio loudness for better transcription accuracy
+        if normalize_audio_enabled:
+            from subgen.media.audio import normalize_audio
+            is_path = isinstance(data, str)
+            normalized = normalize_audio(data, is_file_path=is_path)
+            if normalized is not None:
+                data = normalized
+
         args = {}
         display_name = os.path.basename(file_path)
         args["progress_callback"] = ProgressHandler(display_name)
@@ -463,6 +485,13 @@ def asr_task_worker(task_data: dict) -> None:
         args = {}
         display_name = os.path.basename(video_file) if video_file else task_id
         args["progress_callback"] = ProgressHandler(display_name)
+
+        # Normalize audio loudness for better transcription accuracy
+        if normalize_audio_enabled and encode:
+            from subgen.media.audio import normalize_audio
+            normalized = normalize_audio(file_content, is_file_path=False)
+            if normalized is not None:
+                file_content = normalized
 
         # Handle audio encoding
         if encode:

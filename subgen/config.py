@@ -82,6 +82,7 @@ reload_script_on_change: bool = convert_to_bool(os.getenv('RELOAD_SCRIPT_ON_CHAN
 lrc_for_audio_files: bool = convert_to_bool(os.getenv('LRC_FOR_AUDIO_FILES', True))
 custom_regroup: str = os.getenv('CUSTOM_REGROUP', 'cm_sl=84_sl=42++++++1')
 min_subtitle_duration: float = float(os.getenv('MIN_SUBTITLE_DURATION', '0'))
+normalize_audio: bool = convert_to_bool(os.getenv('NORMALIZE_AUDIO', False))
 detect_language_length: int = int(os.getenv('DETECT_LANGUAGE_LENGTH', 30))
 detect_language_offset: int = int(os.getenv('DETECT_LANGUAGE_OFFSET', 0))
 model_cleanup_delay: int = int(os.getenv('MODEL_CLEANUP_DELAY', 30))

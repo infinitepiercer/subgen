@@ -180,6 +180,7 @@ See [discussion #115](https://github.com/McCloudS/subgen/discussions/115#discuss
 | `SHOULD_WHISPER_DETECT_AUDIO_LANGUAGE` | `False` | Let Whisper detect language when no audio language tag exists |
 | `USE_MODEL_PROMPT` | `False` | Use a prompt to improve punctuation in transcriptions |
 | `CUSTOM_MODEL_PROMPT` | `''` | Override the default prompt ([guide](https://medium.com/axinc-ai/prompt-engineering-in-whisper-6bb18003562d)) |
+| `NORMALIZE_AUDIO` | `False` | Normalize audio loudness (EBU R128) before transcription for better accuracy with quiet/inconsistent audio |
 | `SUBGEN_KWARGS` | `{}` | Python dict of extra options passed to `model.transcribe()` |
 
 ### Subtitle Output

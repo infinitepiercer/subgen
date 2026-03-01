@@ -103,7 +103,7 @@ def log_startup_config() -> None:
         detect_language_length, detect_language_offset, force_detected_language_to,
         should_whisper_detect_audio_language,
         namesublang, subtitle_language_naming_type, word_level_highlight,
-        custom_regroup, min_subtitle_duration, lrc_for_audio_files,
+        custom_regroup, min_subtitle_duration, normalize_audio, lrc_for_audio_files,
         append, show_in_subname_subgen, show_in_subname_model,
         procaddedmedia, procmediaonplay,
         skipifinternalsublang, skipifexternalsub, skip_if_to_transcribe_sub_already_exist,
@@ -148,6 +148,7 @@ def log_startup_config() -> None:
         logging.info(f"    Confidence Thresh  : {detect_confidence_threshold}")
     logging.info(f"    Detect Language    : {should_whisper_detect_audio_language}")
     logging.info(f"    Detect Length      : {detect_language_length}s (offset: {detect_language_offset}s)")
+    logging.info(f"    Normalize Audio    : {normalize_audio}")
     if force_detected_language_to:
         logging.info(f"    Force Language     : {force_detected_language_to}")
 

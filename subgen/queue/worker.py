@@ -11,6 +11,7 @@ from subgen.config import (
     compute_type,
     custom_regroup,
     min_subtitle_duration,
+    normalize_audio,
     transcribe_or_translate,
 )
 from subgen.queue.deduplicated_queue import task_queue
@@ -39,7 +40,7 @@ def transcription_worker():
             logging.info(
                 f"  Config: model={whisper_model}  device={transcribe_device}  compute={compute_type}  "
                 f"mode={task.get('transcribe_or_translate', transcribe_or_translate)}  "
-                f"regroup={custom_regroup}  min_dur={min_dur_str}"
+                f"regroup={custom_regroup}  min_dur={min_dur_str}  normalize={normalize_audio}"
             )
 
             start_time = time.time()

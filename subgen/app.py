@@ -6,12 +6,18 @@ logging, includes every route router, and starts the background worker
 threads.
 """
 
+import warnings
+
 from subgen.config import app  # The FastAPI instance from config.py
 from subgen.logging_setup import configure_logging, log_startup_config
 
 # Configure logging (reads ``debug`` internally)
 configure_logging()
 log_startup_config()
+
+# Suppress stable-ts overlap warning — we intentionally create overlapping
+# subtitles via MIN_SUBTITLE_DURATION and pad so they stack on screen.
+warnings.filterwarnings("ignore", message=".*out of order timestamp.*")
 
 # ---------------------------------------------------------------------------
 # Import and include all routers

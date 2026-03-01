@@ -1,37 +1,37 @@
 FROM nvidia/cuda:12.3.2-base-ubuntu22.04
 
-COPY requirements.txt entrypoint.sh /
-
-# --- FIX 1: Install gosu ---
+# Layer 1: System packages (~200MB, rarely changes)
 RUN (apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg python3 python3-pip curl gosu tzdata || \
     (apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
     ffmpeg python3 python3-pip curl gosu tzdata)) && \
-    python3 -m pip install -U --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu124 && \
-    python3 -m pip install -U --no-cache-dir -r requirements.txt && \
-    apt-get purge -y --auto-remove python3-pip && \
-    rm -rf \
-    /var/lib/apt/lists/* \
-    /tmp/*
+    rm -rf /var/lib/apt/lists/*
+
+# Layer 2: PyTorch (~2.5GB, only changes on torch version bumps)
+RUN python3 -m pip install -U --no-cache-dir \
+    torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# Layer 3: Python dependencies (~500MB, only changes when requirements.txt changes)
+COPY requirements.txt /tmp/requirements.txt
+RUN python3 -m pip install -U --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
 
 WORKDIR /subgen
 
-# Copy files
+# Layer 4: Source code (tiny, changes on every push)
+COPY entrypoint.sh /entrypoint.sh
 COPY launcher.py subgen.py language_code.py /subgen/
 COPY subgen/ /subgen/subgen/
 
-# --- FIX 2: Create a dedicated cache directory ---
-# This prevents the app from trying to write to root-owned /.cache
+# Cache directory for HuggingFace/Matplotlib
 RUN mkdir -p /cache && chmod 777 /cache
 
-# --- FIX 3: Set Environment Vars to use the new cache ---
-# This forces HuggingFace and Matplotlib to write to our writable folder
 ENV XDG_CACHE_HOME=/cache \
     HF_HOME=/cache/huggingface \
     MPLCONFIGDIR=/cache/matplotlib \
-    PYTHONUNBUFFERED=1 
+    PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python3", "launcher.py"]
