@@ -1,10 +1,6 @@
 name: Build_Subgen_Dockerfile_GPU
 
 on:
-  push:
-    paths:
-      - 'requirements.txt'
-      - 'Dockerfile'
   workflow_dispatch:
 
 permissions:

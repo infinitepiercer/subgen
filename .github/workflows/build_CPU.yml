@@ -1,10 +1,6 @@
 name: Build_Subgen_Dockerfile_CPU
 
 on:
-  push:
-    paths:
-      - 'requirements.txt'
-      - 'Dockerfile.cpu'
   workflow_dispatch:
 
 permissions:
