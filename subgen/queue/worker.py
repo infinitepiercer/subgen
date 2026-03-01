@@ -4,7 +4,15 @@ import time
 import logging
 import threading
 
-from subgen.config import concurrent_transcriptions
+from subgen.config import (
+    concurrent_transcriptions,
+    whisper_model,
+    transcribe_device,
+    compute_type,
+    custom_regroup,
+    min_subtitle_duration,
+    transcribe_or_translate,
+)
 from subgen.queue.deduplicated_queue import task_queue
 from subgen.models.whisper_model import delete_model
 from subgen.services.transcription import gen_subtitles, asr_task_worker
@@ -27,6 +35,12 @@ def transcription_worker():
             proc_count = len(task_queue.get_processing_tasks())
             queue_count = len(task_queue.get_queued_tasks())
             logging.info(f"WORKER START : [{task_type.upper():<10}] {display_name:^40} | Jobs: {proc_count} processing, {queue_count} queued")
+            min_dur_str = f"{min_subtitle_duration}s" if min_subtitle_duration > 0 else "off"
+            logging.info(
+                f"  Config: model={whisper_model}  device={transcribe_device}  compute={compute_type}  "
+                f"mode={task.get('transcribe_or_translate', transcribe_or_translate)}  "
+                f"regroup={custom_regroup}  min_dur={min_dur_str}"
+            )
 
             start_time = time.time()
             if task_type == "detect_language":

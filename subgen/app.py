@@ -7,10 +7,11 @@ threads.
 """
 
 from subgen.config import app  # The FastAPI instance from config.py
-from subgen.logging_setup import configure_logging
+from subgen.logging_setup import configure_logging, log_startup_config
 
 # Configure logging (reads ``debug`` internally)
 configure_logging()
+log_startup_config()
 
 # ---------------------------------------------------------------------------
 # Import and include all routers

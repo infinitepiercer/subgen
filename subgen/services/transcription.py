@@ -50,6 +50,53 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Regroup string pre-processing (stable-ts pad bug workaround)
+# ---------------------------------------------------------------------------
+
+
+import re
+
+_PAD_PATTERN = re.compile(r'_p=([^_]+)')
+
+
+def strip_pad_from_regroup(regroup: str) -> tuple[str, float, float]:
+    """Extract ``_p=start,end`` from a regroup string and return clean values.
+
+    stable-ts has a bug where ``regroup()`` passes pad arguments as strings
+    instead of floats, causing ``'>' not supported between 'str' and 'int'``.
+    We strip the pad operation from the regroup string and apply it ourselves
+    after transcription with properly typed arguments.
+
+    Returns:
+        (cleaned_regroup, start_pad, end_pad)
+    """
+    match = _PAD_PATTERN.search(regroup)
+    if not match:
+        return regroup, 0.0, 0.0
+
+    pad_args = match.group(1).split(",")
+    start_pad = float(pad_args[0]) if len(pad_args) > 0 else 0.0
+    end_pad = float(pad_args[1]) if len(pad_args) > 1 else 0.0
+
+    cleaned = _PAD_PATTERN.sub('', regroup)
+    # Clean up any trailing/leading underscores left over
+    cleaned = cleaned.strip('_')
+
+    return cleaned, start_pad, end_pad
+
+
+def apply_pad(result, start_pad: float, end_pad: float) -> None:
+    """Apply padding to subtitle segments (workaround for stable-ts pad bug)."""
+    if start_pad == 0.0 and end_pad == 0.0:
+        return
+    for segment in result.segments:
+        if start_pad > 0:
+            segment.start = max(0, segment.start - start_pad)
+        if end_pad > 0:
+            segment.end = segment.end + end_pad
+
+
+# ---------------------------------------------------------------------------
 # Minimum subtitle duration enforcement
 # ---------------------------------------------------------------------------
 
@@ -310,8 +357,12 @@ def gen_subtitles(
         display_name = os.path.basename(file_path)
         args["progress_callback"] = ProgressHandler(display_name)
 
+        # Strip pad from regroup string (stable-ts bug workaround)
+        start_pad, end_pad = 0.0, 0.0
         if custom_regroup and custom_regroup.lower() != "default":
-            args["regroup"] = custom_regroup
+            cleaned_regroup, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
+            if cleaned_regroup:
+                args["regroup"] = cleaned_regroup
 
         args.update(whisper_kwargs)
 
@@ -333,6 +384,7 @@ def gen_subtitles(
         )
 
         appendLine(result)
+        apply_pad(result, start_pad, end_pad)
         enforce_min_subtitle_duration(result, min_subtitle_duration)
 
         # Pass 2: Translate non-English segments if using two-pass mode
@@ -424,8 +476,12 @@ def asr_task_worker(task_data: dict) -> None:
             )
             args["input_sr"] = 16000
 
+        # Strip pad from regroup string (stable-ts bug workaround)
+        start_pad, end_pad = 0.0, 0.0
         if custom_regroup and custom_regroup.lower() != "default":
-            args["regroup"] = custom_regroup
+            cleaned_regroup, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
+            if cleaned_regroup:
+                args["regroup"] = cleaned_regroup
 
         args.update(whisper_kwargs)
 
@@ -437,6 +493,7 @@ def asr_task_worker(task_data: dict) -> None:
             task=actual_task, language=language, **args, verbose=None
         )
         appendLine(result)
+        apply_pad(result, start_pad, end_pad)
         enforce_min_subtitle_duration(result, min_subtitle_duration)
 
         # Pass 2: Translate non-English segments if using two-pass mode
