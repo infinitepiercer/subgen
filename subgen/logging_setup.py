@@ -117,6 +117,7 @@ def log_startup_config() -> None:
         transcribe_folders, monitor,
         clear_vram_on_complete, model_cleanup_delay, asr_timeout,
         filter_subtitles,
+        enable_diarization, diarization_model,
         docker_status,
     )
 
@@ -164,6 +165,10 @@ def log_startup_config() -> None:
     logging.info(f"    Show Model Name    : {show_in_subname_model}")
     logging.info(f"    Append Line        : {append}")
     logging.info(f"    Filter Subtitles   : {filter_subtitles}")
+
+    logging.info("  DIARIZATION")
+    logging.info(f"    Enabled            : {enable_diarization}")
+    logging.info(f"    Model              : {diarization_model}")
 
     logging.info("  SKIP / FILTER")
     logging.info(f"    Process on Add     : {procaddedmedia}")

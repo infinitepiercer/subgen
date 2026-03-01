@@ -42,11 +42,15 @@ services:
       # --- Subtitle Output ---
       SUBTITLE_LANGUAGE_NAME: en
       SUBTITLE_LANGUAGE_NAMING_TYPE: ISO_639_1
-      CUSTOM_REGROUP: cm_sl=84_sl=42++++++1
+      CUSTOM_REGROUP: cm_sp=.* /。/?/？_sg=.5_sl=84_sl=42++++++1
 
       # --- Resource Management ---
       CLEAR_VRAM_ON_COMPLETE: "true"     # frees RAM when idle (works for CPU too)
       MODEL_CLEANUP_DELAY: 30
+
+      # --- Speaker Diarization ---
+      # ENABLE_DIARIZATION: "false"
+      # DIARIZATION_MODEL: english
 
       # --- Server ---
       WEBHOOK_PORT: 9000

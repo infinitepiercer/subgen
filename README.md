@@ -182,6 +182,8 @@ See [discussion #115](https://github.com/McCloudS/subgen/discussions/115#discuss
 | `CUSTOM_MODEL_PROMPT` | `''` | Override the default prompt ([guide](https://medium.com/axinc-ai/prompt-engineering-in-whisper-6bb18003562d)) |
 | `NORMALIZE_AUDIO` | `False` | Normalize audio loudness (EBU R128) before transcription for better accuracy with quiet/inconsistent audio |
 | `SUBGEN_KWARGS` | `{}` | Python dict of extra options passed to `model.transcribe()` |
+| `ENABLE_DIARIZATION` | `False` | Enable speaker diarization to label subtitle segments with speaker identifiers |
+| `DIARIZATION_MODEL` | `english` | WeSpeaker model to use for diarization (e.g. `english`, `chinese`) |
 
 ### Subtitle Output
 
@@ -190,7 +192,7 @@ See [discussion #115](https://github.com/McCloudS/subgen/discussions/115#discuss
 | `SUBTITLE_LANGUAGE_NAME` | `''` | Language code used in the subtitle filename |
 | `SUBTITLE_LANGUAGE_NAMING_TYPE` | `ISO_639_2_B` | Naming format: `ISO_639_1`, `ISO_639_2_T`, `ISO_639_2_B`, `NAME`, or `NATIVE` |
 | `WORD_LEVEL_HIGHLIGHT` | `False` | Highlight each word as it's spoken |
-| `CUSTOM_REGROUP` | `cm_sl=84_sl=42++++++1` | Segment regrouping rules (`default` for stable-ts defaults) |
+| `CUSTOM_REGROUP` | `cm_sp=.* /。/?/？_sg=.5_sl=84_sl=42++++++1` | Segment regrouping rules (`default` for stable-ts defaults) |
 | `MIN_SUBTITLE_DURATION` | `0` | Minimum seconds a subtitle stays on screen (0 = disabled). Extends short segments so fast speech doesn't flash by. Try `1.5` to start. |
 | `LRC_FOR_AUDIO_FILES` | `True` | Generate `.lrc` instead of `.srt` for audio files |
 | `APPEND` | `False` | Append "Transcribed by whisperAI..." to subtitles |

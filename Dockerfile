@@ -31,6 +31,7 @@ RUN mkdir -p /cache && chmod 777 /cache
 ENV XDG_CACHE_HOME=/cache \
     HF_HOME=/cache/huggingface \
     MPLCONFIGDIR=/cache/matplotlib \
+    WESPEAKER_HOME=/cache/wespeaker \
     PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["/entrypoint.sh"]

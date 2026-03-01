@@ -64,6 +64,10 @@ services:
       CLEAR_VRAM_ON_COMPLETE: "true"
       MODEL_CLEANUP_DELAY: 60
 
+      # --- Speaker Diarization ---
+      # ENABLE_DIARIZATION: "false"
+      # DIARIZATION_MODEL: english
+
       # --- Server ---
       WEBHOOK_PORT: 9000
       DEBUG: "false"

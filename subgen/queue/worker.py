@@ -14,6 +14,7 @@ from subgen.config import (
     min_subtitle_duration,
     normalize_audio,
     transcribe_or_translate,
+    enable_diarization,
 )
 from subgen.queue.deduplicated_queue import task_queue
 from subgen.models.whisper_model import delete_model
@@ -42,7 +43,7 @@ def transcription_worker():
                 f"  Config: model={whisper_model}  device={transcribe_device}  compute={compute_type}  "
                 f"mode={task.get('transcribe_or_translate', transcribe_or_translate)}  "
                 f"regroup={custom_regroup}  min_dur={min_dur_str}  normalize={normalize_audio}  "
-                f"filter={filter_subtitles}"
+                f"filter={filter_subtitles}  diarization={enable_diarization}"
             )
 
             start_time = time.time()

@@ -9,6 +9,7 @@ from language_code import LanguageCode
 
 from subgen.config import (
     custom_regroup,
+    enable_diarization,
     filter_subtitles,
     force_detected_language_to,
     kwargs as whisper_kwargs,
@@ -26,6 +27,7 @@ from subgen.config import (
     skip_unknown_language,
     skipifexternalsub,
     skipifinternalsublang,
+    transcribe_device,
     transcribe_or_translate,
     word_level_highlight,
 )
@@ -441,6 +443,11 @@ def gen_subtitles(
         apply_pad(result, start_pad, end_pad)
         enforce_min_subtitle_duration(result, min_subtitle_duration)
 
+        if enable_diarization:
+            from subgen.services.diarization import add_speaker_labels
+            speaker_count = add_speaker_labels(result, data, transcribe_device)
+            logging.info(f"Diarization: identified {speaker_count} speaker(s)")
+
         # Pass 2: Translate non-English segments if using two-pass mode
         if transcribe_or_translate_param == "transcribe_and_translate":
             from subgen.services.translation import translate_segments, ensure_translation_models
@@ -558,6 +565,11 @@ def asr_task_worker(task_data: dict) -> None:
             filter_segments(result)
         apply_pad(result, start_pad, end_pad)
         enforce_min_subtitle_duration(result, min_subtitle_duration)
+
+        if enable_diarization:
+            from subgen.services.diarization import add_speaker_labels
+            speaker_count = add_speaker_labels(result, file_content, transcribe_device)
+            logging.info(f"Diarization: identified {speaker_count} speaker(s)")
 
         # Pass 2: Translate non-English segments if using two-pass mode
         if requested_task == "transcribe_and_translate":

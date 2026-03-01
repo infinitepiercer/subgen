@@ -9,3 +9,4 @@ ffmpeg-python
 watchdog
 langdetect
 argostranslate
+wespeaker @ git+https://github.com/wenet-e2e/wespeaker.git
