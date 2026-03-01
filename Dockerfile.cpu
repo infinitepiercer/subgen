@@ -4,6 +4,7 @@ FROM python:3.11-slim-bullseye AS builder
 WORKDIR /build
 
 # Build tools (rarely changes)
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg git tzdata build-essential python3-dev || \

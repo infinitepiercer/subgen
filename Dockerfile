@@ -1,6 +1,7 @@
 FROM nvidia/cuda:12.3.2-base-ubuntu22.04
 
 # Layer 1: System packages (~200MB, rarely changes)
+ENV DEBIAN_FRONTEND=noninteractive
 RUN (apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg python3 python3-pip python3-dev build-essential curl gosu tzdata git || \
