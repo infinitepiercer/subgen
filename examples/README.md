@@ -1,0 +1,46 @@
+# Example Docker Compose Configurations
+
+Pick the example closest to your setup and copy it into your `docker-compose.yml`.
+
+| Example | GPU | Use Case |
+|---------|:---:|----------|
+| [gpu-english](docker-compose.gpu-english.yml) | Yes | English media library — forced English prevents hallucinations during silence |
+| [gpu-multilingual](docker-compose.gpu-multilingual.yml) | Yes | Mixed-language library (anime, foreign films) — auto-detects audio language |
+| [cpu](docker-compose.cpu.yml) | No | No NVIDIA GPU — uses lighter model and CPU image |
+| [bazarr](docker-compose.bazarr.yml) | Yes | Bazarr Whisper provider — Bazarr sends audio over HTTP, no shared paths needed |
+
+## Which one should I use?
+
+- **Mostly English content?** Start with **gpu-english**. It locks Whisper to English so it can't hallucinate random languages (German, Chinese, etc.) during quiet sections.
+- **Anime / foreign films / multi-language?** Use **gpu-multilingual**. Whisper detects the language automatically and `transcribe_and_translate` handles the rest.
+- **No NVIDIA GPU?** Use **cpu**. Expect slower transcription (~2-4x realtime with the `medium` model).
+- **Using Bazarr?** Use **bazarr**. Bazarr controls the language and task per request. Disable media server webhooks to avoid duplicates.
+
+## Common tweaks
+
+| What | How |
+|------|-----|
+| Less VRAM usage | Change `WHISPER_MODEL` to `medium` and/or `COMPUTE_TYPE` to `int8` |
+| Skip files that already have subtitles | Set `SKIP_IF_TARGET_SUBTITLES_EXIST: "true"` |
+| Auto-transcribe on media add/play | Set `PROCESS_ADDED_MEDIA: "true"` and configure your Plex/Jellyfin webhook |
+| Word-level karaoke highlighting | Set `WORD_LEVEL_HIGHLIGHT: "true"` |
+| Minimum subtitle display time | Set `MIN_SUBTITLE_DURATION: "1.5"` (seconds) |
+| Skip intro music for language detection | Set `DETECT_LANGUAGE_OFFSET: 90` (seconds to skip) |
+
+## Volume paths
+
+All examples use placeholder paths — update them to match your media server:
+
+```yaml
+volumes:
+  - ./models:/subgen/models:rw       # model cache (keep this)
+  - /path/to/media:/media:rw         # change to your actual media path
+```
+
+If your media server sees files at `/tv/show.mkv` but Subgen sees them at `/media/tv/show.mkv`, enable path mapping:
+
+```yaml
+USE_PATH_MAPPING: "true"
+PATH_MAPPING_FROM: /tv
+PATH_MAPPING_TO: /media/tv
+```

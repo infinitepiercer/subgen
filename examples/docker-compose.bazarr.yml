@@ -1,0 +1,67 @@
+# =============================================================================
+# Subgen — Bazarr Integration
+# =============================================================================
+# Best for: using Subgen as a Whisper provider for Bazarr.
+# Bazarr sends audio over HTTP, so no shared volume paths are needed between
+# Bazarr and Subgen (only Subgen needs access to models).
+#
+# Bazarr setup:
+#   1. Settings > Subtitles > Whisper Provider
+#   2. Endpoint: http://<subgen-ip>:9000
+#   3. See https://wiki.bazarr.media/Additional-Configuration/Whisper-Provider/
+#
+# Tip: Don't enable Bazarr AND media server webhooks at the same time,
+#      or you'll get duplicate subtitles.
+# =============================================================================
+
+services:
+  subgen:
+    container_name: subgen
+    image: ghcr.io/regix1/subgen:latest
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/subgen/models:rw
+    environment:
+      # --- GPU ---
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      # --- Whisper Engine ---
+      TRANSCRIBE_DEVICE: cuda
+      COMPUTE_TYPE: float16
+      WHISPER_MODEL: large-v3-turbo
+      WHISPER_THREADS: 4
+      CONCURRENT_TRANSCRIPTIONS: 1
+      MODEL_PATH: /subgen/models
+      NORMALIZE_AUDIO: "true"
+
+      # --- Post-Transcription Filter ---
+      FILTER_SUBTITLES: "true"
+
+      # --- Transcription Mode ---
+      # Bazarr tells Subgen what language/task to use per request,
+      # so these are just defaults for non-Bazarr use.
+      TRANSCRIBE_OR_TRANSLATE: transcribe
+      FORCE_DETECTED_LANGUAGE_TO: en
+
+      # --- Disable webhook processing ---
+      # Bazarr handles scheduling — don't also process on add/play.
+      PROCESS_ADDED_MEDIA: "false"
+      PROCESS_MEDIA_ON_PLAY: "false"
+
+      # --- Resource Management ---
+      CLEAR_VRAM_ON_COMPLETE: "true"
+      MODEL_CLEANUP_DELAY: 60
+
+      # --- Server ---
+      WEBHOOK_PORT: 9000
+      DEBUG: "false"

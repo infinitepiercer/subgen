@@ -1,0 +1,51 @@
+# =============================================================================
+# Subgen — CPU-Only
+# =============================================================================
+# Best for: systems without an NVIDIA GPU (Intel/AMD, NAS, VMs).
+# Uses the smaller CPU image and a lighter model for reasonable speed.
+#
+# Expect ~2-4x realtime on a modern CPU with the medium model
+# (a 30-minute episode takes roughly 60-120 minutes).
+# =============================================================================
+
+services:
+  subgen:
+    container_name: subgen
+    image: ghcr.io/regix1/subgen:cpu     # smaller image, no CUDA libraries
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./models:/subgen/models:rw       # persist downloaded models
+      - /path/to/media:/media:rw         # match your media server paths
+    environment:
+      # --- Whisper Engine ---
+      TRANSCRIBE_DEVICE: cpu
+      COMPUTE_TYPE: int8                 # int8 is fastest on CPU
+      WHISPER_MODEL: medium              # medium is best speed/accuracy for CPU
+      WHISPER_THREADS: 4                 # match your CPU core count
+      CONCURRENT_TRANSCRIPTIONS: 1       # keep at 1 for CPU to avoid thrashing
+      MODEL_PATH: /subgen/models
+      NORMALIZE_AUDIO: "true"
+
+      # --- Post-Transcription Filter ---
+      FILTER_SUBTITLES: "true"
+
+      # --- Transcription Mode ---
+      # Use plain transcribe for CPU — translate adds significant processing time.
+      # Switch to transcribe_and_translate if you need translation and can wait.
+      TRANSCRIBE_OR_TRANSLATE: transcribe
+      FORCE_DETECTED_LANGUAGE_TO: en
+
+      # --- Subtitle Output ---
+      SUBTITLE_LANGUAGE_NAME: en
+      SUBTITLE_LANGUAGE_NAMING_TYPE: ISO_639_1
+      CUSTOM_REGROUP: cm_sl=84_sl=42++++++1
+
+      # --- Resource Management ---
+      CLEAR_VRAM_ON_COMPLETE: "true"     # frees RAM when idle (works for CPU too)
+      MODEL_CLEANUP_DELAY: 30
+
+      # --- Server ---
+      WEBHOOK_PORT: 9000
+      DEBUG: "false"

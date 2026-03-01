@@ -1,0 +1,74 @@
+# =============================================================================
+# Subgen — GPU + Multilingual (Auto-Detect Language)
+# =============================================================================
+# Best for: mixed-language libraries (anime, foreign films, multi-language TV).
+# Whisper detects the audio language automatically, transcribes in the original
+# language, then argostranslate converts non-English segments to English.
+#
+# Note: During long silences, Whisper may hallucinate text in random languages.
+# FILTER_SUBTITLES catches most of these (CJK in Latin results, ghost phrases,
+# known hallucination strings).
+# =============================================================================
+
+services:
+  subgen:
+    container_name: subgen
+    image: ghcr.io/regix1/subgen:latest
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/subgen/models:rw       # persist downloaded models
+      - /path/to/media:/media:rw         # match your media server paths
+    environment:
+      # --- GPU ---
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      # --- Whisper Engine ---
+      TRANSCRIBE_DEVICE: cuda
+      COMPUTE_TYPE: float16
+      WHISPER_MODEL: large-v3-turbo
+      WHISPER_THREADS: 4
+      CONCURRENT_TRANSCRIPTIONS: 1
+      MODEL_PATH: /subgen/models
+      NORMALIZE_AUDIO: "true"
+
+      # --- Post-Transcription Filter ---
+      FILTER_SUBTITLES: "true"
+
+      # --- Transcription Mode ---
+      TRANSCRIBE_OR_TRANSLATE: transcribe_and_translate
+      TRANSLATE_SOURCE_LANGUAGES: fr,es,de,it,pt,ja,ko,zh,ru
+      DETECT_CONFIDENCE_THRESHOLD: "0.7"
+
+      # --- Language Detection ---
+      # Let Whisper detect the language from the first 120s of audio.
+      # Works well for content where the audio language varies per file.
+      SHOULD_WHISPER_DETECT_AUDIO_LANGUAGE: "true"
+      DETECT_LANGUAGE_LENGTH: 120
+      DETECT_LANGUAGE_OFFSET: 0          # increase to skip intros/theme songs
+
+      # --- Audio Track Selection ---
+      # Pipe-separated, in order of preference. Subgen picks the first match.
+      PREFERRED_AUDIO_LANGUAGES: eng|jpn|fre|spa|deu|ita|por|kor|zho|rus
+
+      # --- Subtitle Output ---
+      SUBTITLE_LANGUAGE_NAME: en
+      SUBTITLE_LANGUAGE_NAMING_TYPE: ISO_639_1
+      CUSTOM_REGROUP: cm_sl=84_sl=42++++++1
+
+      # --- Resource Management ---
+      CLEAR_VRAM_ON_COMPLETE: "true"
+      MODEL_CLEANUP_DELAY: 60
+
+      # --- Server ---
+      WEBHOOK_PORT: 9000
+      DEBUG: "false"
