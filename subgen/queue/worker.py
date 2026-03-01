@@ -10,6 +10,7 @@ from subgen.config import (
     transcribe_device,
     compute_type,
     custom_regroup,
+    filter_subtitles,
     min_subtitle_duration,
     normalize_audio,
     transcribe_or_translate,
@@ -40,7 +41,8 @@ def transcription_worker():
             logging.info(
                 f"  Config: model={whisper_model}  device={transcribe_device}  compute={compute_type}  "
                 f"mode={task.get('transcribe_or_translate', transcribe_or_translate)}  "
-                f"regroup={custom_regroup}  min_dur={min_dur_str}  normalize={normalize_audio}"
+                f"regroup={custom_regroup}  min_dur={min_dur_str}  normalize={normalize_audio}  "
+                f"filter={filter_subtitles}"
             )
 
             start_time = time.time()

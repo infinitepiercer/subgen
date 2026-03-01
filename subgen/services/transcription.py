@@ -8,6 +8,7 @@ from language_code import LanguageCode
 
 from subgen.config import (
     custom_regroup,
+    filter_subtitles,
     force_detected_language_to,
     kwargs as whisper_kwargs,
     lrc_for_audio_files,
@@ -46,6 +47,7 @@ from subgen.services.subtitle import (
     has_subtitle_of_language_in_folder,
     name_subtitle,
 )
+from subgen.services.subtitle_filter import filter_segments
 
 logger = logging.getLogger(__name__)
 
@@ -406,6 +408,8 @@ def gen_subtitles(
         )
 
         appendLine(result)
+        if filter_subtitles:
+            filter_segments(result)
         apply_pad(result, start_pad, end_pad)
         enforce_min_subtitle_duration(result, min_subtitle_duration)
 
@@ -522,6 +526,8 @@ def asr_task_worker(task_data: dict) -> None:
             task=actual_task, language=language, **args, verbose=None
         )
         appendLine(result)
+        if filter_subtitles:
+            filter_segments(result)
         apply_pad(result, start_pad, end_pad)
         enforce_min_subtitle_duration(result, min_subtitle_duration)
 

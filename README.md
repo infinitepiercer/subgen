@@ -194,6 +194,7 @@ See [discussion #115](https://github.com/McCloudS/subgen/discussions/115#discuss
 | `MIN_SUBTITLE_DURATION` | `0` | Minimum seconds a subtitle stays on screen (0 = disabled). Extends short segments so fast speech doesn't flash by. Try `1.5` to start. |
 | `LRC_FOR_AUDIO_FILES` | `True` | Generate `.lrc` instead of `.srt` for audio files |
 | `APPEND` | `False` | Append "Transcribed by whisperAI..." to subtitles |
+| `FILTER_SUBTITLES` | `False` | Remove hallucinated phrases (e.g. "Thanks for watching", URLs) and gibberish segments from Whisper output before writing subtitles |
 | `SHOW_IN_SUBNAME_SUBGEN` | `True` | Add "subgen" to subtitle filename |
 | `SHOW_IN_SUBNAME_MODEL` | `True` | Add model name to subtitle filename |
 

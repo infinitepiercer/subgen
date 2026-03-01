@@ -116,6 +116,7 @@ def log_startup_config() -> None:
         use_path_mapping, path_mapping_from, path_mapping_to,
         transcribe_folders, monitor,
         clear_vram_on_complete, model_cleanup_delay, asr_timeout,
+        filter_subtitles,
         docker_status,
     )
 
@@ -162,6 +163,7 @@ def log_startup_config() -> None:
     logging.info(f"    Show 'subgen'      : {show_in_subname_subgen}")
     logging.info(f"    Show Model Name    : {show_in_subname_model}")
     logging.info(f"    Append Line        : {append}")
+    logging.info(f"    Filter Subtitles   : {filter_subtitles}")
 
     logging.info("  SKIP / FILTER")
     logging.info(f"    Process on Add     : {procaddedmedia}")

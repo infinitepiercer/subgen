@@ -87,6 +87,7 @@ detect_language_length: int = int(os.getenv('DETECT_LANGUAGE_LENGTH', 30))
 detect_language_offset: int = int(os.getenv('DETECT_LANGUAGE_OFFSET', 0))
 model_cleanup_delay: int = int(os.getenv('MODEL_CLEANUP_DELAY', 30))
 asr_timeout: int = int(os.getenv('ASR_TIMEOUT', 18000))
+filter_subtitles: bool = convert_to_bool(os.getenv('FILTER_SUBTITLES', False))
 
 # ---------------------------------------------------------------------------
 # Skip Configuration - with backwards compatibility
