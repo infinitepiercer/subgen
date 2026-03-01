@@ -40,10 +40,19 @@ services:
       MODEL_PATH: /subgen/models
       NORMALIZE_AUDIO: "true"            # EBU R128 normalization for quiet/uneven audio
 
-      # --- Post-Transcription Filter ---
-      # Removes hallucinated phrases ("Thanks for watching", URLs, "Subscribe"),
-      # gibberish (symbols, dots, single chars), ghost phrases ("Bye.", "You"),
-      # and foreign-script hallucinations (CJK chars appearing in English results).
+      # --- Anti-Hallucination ---
+      # Layered defense against Whisper generating fake text during silence.
+      #
+      # SUBGEN_KWARGS enables built-in protections in stable-ts and faster-whisper:
+      #   vad=true                          Silero VAD masks silence before Whisper sees it
+      #   nonspeech_skip=3.0                Skip non-speech regions longer than 3 seconds
+      #   hallucination_silence_threshold=2 Score-based detection of hallucinated segments
+      #   condition_on_previous_text=false   Prevent one hallucination from cascading forward
+      #   no_speech_threshold=0.2           Aggressively mark low-confidence segments as silence
+      SUBGEN_KWARGS: "{'vad': True, 'nonspeech_skip': 3.0, 'hallucination_silence_threshold': 2, 'condition_on_previous_text': False, 'no_speech_threshold': 0.2}"
+
+      # Post-processing filter catches anything that slips through:
+      # known phrases ("Thanks for watching"), gibberish, ghost words, CJK in English results.
       FILTER_SUBTITLES: "true"
 
       # --- Transcription Mode ---

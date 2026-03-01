@@ -16,6 +16,27 @@ Pick the example closest to your setup and copy it into your `docker-compose.yml
 - **No NVIDIA GPU?** Use **cpu**. Expect slower transcription (~2-4x realtime with the `medium` model).
 - **Using Bazarr?** Use **bazarr**. Bazarr controls the language and task per request. Disable media server webhooks to avoid duplicates.
 
+## Anti-Hallucination
+
+All examples include `SUBGEN_KWARGS` and `FILTER_SUBTITLES` for layered hallucination prevention. Whisper sometimes generates fake text during silence ("I'm so sorry.", "Thanks for watching", random CJK characters). The defense works in layers:
+
+| Layer | Parameter | What it does |
+|-------|-----------|-------------|
+| 1. Pre-processing | `vad=True` | Silero VAD masks silence before Whisper sees it |
+| 2. Pre-processing | `nonspeech_skip=3.0` | Skip non-speech regions longer than 3 seconds entirely |
+| 3. During decoding | `hallucination_silence_threshold=2` | Detect and skip anomalous segments after 2s+ silence |
+| 4. During decoding | `condition_on_previous_text=False` | Prevent hallucinations from cascading into the next segment |
+| 5. During decoding | `no_speech_threshold=0.2` | Aggressively mark low-confidence segments as silence |
+| 6. Post-processing | `FILTER_SUBTITLES=true` | Remove known phrases, gibberish, ghost words, foreign-script text |
+
+To tune these, edit `SUBGEN_KWARGS` in your compose file:
+
+```yaml
+SUBGEN_KWARGS: "{'vad': True, 'nonspeech_skip': 3.0, 'hallucination_silence_threshold': 2, 'condition_on_previous_text': False, 'no_speech_threshold': 0.2}"
+```
+
+If you're getting **missing subtitles for quiet speech**, try raising `nonspeech_skip` to `5.0` or lowering `no_speech_threshold` to `0.3`.
+
 ## Common tweaks
 
 | What | How |

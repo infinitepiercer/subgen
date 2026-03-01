@@ -44,7 +44,9 @@ services:
       MODEL_PATH: /subgen/models
       NORMALIZE_AUDIO: "true"
 
-      # --- Post-Transcription Filter ---
+      # --- Anti-Hallucination ---
+      # See gpu-english.yml for detailed explanation of each parameter.
+      SUBGEN_KWARGS: "{'vad': True, 'nonspeech_skip': 3.0, 'hallucination_silence_threshold': 2, 'condition_on_previous_text': False, 'no_speech_threshold': 0.2}"
       FILTER_SUBTITLES: "true"
 
       # --- Transcription Mode ---
