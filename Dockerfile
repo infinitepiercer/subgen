@@ -3,10 +3,10 @@ FROM nvidia/cuda:12.3.2-base-ubuntu22.04
 # Layer 1: System packages (~200MB, rarely changes)
 RUN (apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg python3 python3-pip curl gosu tzdata || \
+    ffmpeg python3 python3-pip curl gosu tzdata git || \
     (apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
-    ffmpeg python3 python3-pip curl gosu tzdata)) && \
+    ffmpeg python3 python3-pip curl gosu tzdata git)) && \
     rm -rf /var/lib/apt/lists/*
 
 # Layer 2: PyTorch (~2.5GB, only changes on torch version bumps)
