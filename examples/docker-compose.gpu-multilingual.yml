@@ -65,7 +65,7 @@ services:
       # --- Subtitle Output ---
       SUBTITLE_LANGUAGE_NAME: en
       SUBTITLE_LANGUAGE_NAMING_TYPE: ISO_639_1
-      CUSTOM_REGROUP: cm_sp=.* /。/?/？_sg=.5_sl=84_sl=42++++++1
+      CUSTOM_REGROUP: default
 
       # --- Resource Management ---
       CLEAR_VRAM_ON_COMPLETE: "true"

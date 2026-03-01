@@ -192,7 +192,7 @@ See [discussion #115](https://github.com/McCloudS/subgen/discussions/115#discuss
 | `SUBTITLE_LANGUAGE_NAME` | `''` | Language code used in the subtitle filename |
 | `SUBTITLE_LANGUAGE_NAMING_TYPE` | `ISO_639_2_B` | Naming format: `ISO_639_1`, `ISO_639_2_T`, `ISO_639_2_B`, `NAME`, or `NATIVE` |
 | `WORD_LEVEL_HIGHLIGHT` | `False` | Highlight each word as it's spoken |
-| `CUSTOM_REGROUP` | `cm_sp=.* /。/?/？_sg=.5_sl=84_sl=42++++++1` | Segment regrouping rules (`default` for stable-ts defaults) |
+| `CUSTOM_REGROUP` | `default` | Segment regrouping rules (`default` for stable-ts defaults) |
 | `MIN_SUBTITLE_DURATION` | `0` | Minimum seconds a subtitle stays on screen (0 = disabled). Extends short segments so fast speech doesn't flash by. Try `1.5` to start. |
 | `LRC_FOR_AUDIO_FILES` | `True` | Generate `.lrc` instead of `.srt` for audio files |
 | `APPEND` | `False` | Append "Transcribed by whisperAI..." to subtitles |

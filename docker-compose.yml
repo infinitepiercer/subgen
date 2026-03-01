@@ -29,7 +29,7 @@ services:
          - "USE_MODEL_PROMPT=False"
          - "CUSTOM_MODEL_PROMPT="
          - "LRC_FOR_AUDIO_FILES=True"
-         - "CUSTOM_REGROUP=cm_sl=84_sl=42++++++1"
+         - "CUSTOM_REGROUP=default"
       volumes:
          - "${TV}:/tv"
          - "${MOVIES}:/movies"

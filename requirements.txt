@@ -10,3 +10,4 @@ watchdog
 langdetect
 argostranslate
 wespeaker @ git+https://github.com/wenet-e2e/wespeaker.git
+s3prl
