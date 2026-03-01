@@ -13,7 +13,7 @@ packages are not installed.
 
 import logging
 import os
-from typing import List, Optional
+from typing import List
 
 logger = logging.getLogger(__name__)
 

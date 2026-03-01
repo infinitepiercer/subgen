@@ -129,3 +129,7 @@ async def asr(
         return {"status": "error", "message": f"Error: {str(e)}"}
     finally:
         await audio_file.close()
+        with task_results_lock:
+            if task_id and task_id in task_results:
+                del task_results[task_id]
+                logging.debug(f"Cleaned up task_results entry for {task_id}")

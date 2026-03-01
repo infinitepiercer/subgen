@@ -54,6 +54,7 @@ def schedule_model_cleanup() -> None:
         if model_cleanup_timer is not None:
             model_cleanup_timer.cancel()
             logging.debug("Cancelled previous model cleanup timer")
+            model_cleanup_timer.join()
 
         # Schedule a new cleanup timer
         model_cleanup_timer = Timer(model_cleanup_delay, perform_model_cleanup)

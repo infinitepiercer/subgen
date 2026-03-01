@@ -1,6 +1,4 @@
-import io
 import logging
-from io import BytesIO
 
 import ffmpeg
 import numpy as np
@@ -89,7 +87,8 @@ def extract_audio_segment_to_memory(input_file, start_time, duration):
     :param input_file: UploadFile object or path to the input audio file
     :param start_time: Start time in seconds (e.g., 60 for 1 minute)
     :param duration: Duration in seconds (e.g., 30 for 30 seconds)
-    :return: BytesIO object containing the audio segment
+    :return: bytes containing the audio segment, or None on error
+
     """
     try:
         if hasattr(input_file, 'file') and hasattr(input_file.file, 'read'):  # Handling UploadFile
@@ -116,7 +115,7 @@ def extract_audio_segment_to_memory(input_file, start_time, duration):
         if not out:
             raise ValueError("FFmpeg output is empty, possibly due to invalid input.")
 
-        return io.BytesIO(out)  # Convert output to BytesIO for in-memory processing
+        return out
 
     except ffmpeg.Error as e:
         logging.error(f"FFmpeg error: {e.stderr.decode()}")
@@ -126,7 +125,7 @@ def extract_audio_segment_to_memory(input_file, start_time, duration):
         return None
 
 
-def extract_audio_track_to_memory(input_video_path, track_index) -> BytesIO | None:
+def extract_audio_track_to_memory(input_video_path, track_index) -> bytes | None:
     """
     Extract a specific audio track from a video file to memory using FFmpeg.
 
@@ -135,7 +134,7 @@ def extract_audio_track_to_memory(input_video_path, track_index) -> BytesIO | No
         track_index (int): The index of the audio track to extract. If None, skip extraction.
 
     Returns:
-        io.BytesIO | None: The audio data as a BytesIO object, or None if extraction failed.
+        bytes | None: The audio data as bytes, or None if extraction failed.
     """
     if track_index is None:
         logging.warning(f"Skipping audio track extraction for {input_video_path} because track index is None")
@@ -155,8 +154,7 @@ def extract_audio_track_to_memory(input_video_path, track_index) -> BytesIO | No
             )
             .run(capture_stdout=True, capture_stderr=True)  # Capture output in memory
         )
-        # Return the audio data as a BytesIO object
-        return BytesIO(out)
+        return out
 
     except ffmpeg.Error as e:
         logging.error("An error occurred: " + e.stderr.decode())
@@ -274,7 +272,7 @@ def get_audio_languages(video_path):
     return [track['language'] for track in audio_tracks]
 
 
-def handle_multiple_audio_tracks(file_path: str, language: LanguageCode | None = None) -> BytesIO | None:
+def handle_multiple_audio_tracks(file_path: str, language: LanguageCode | None = None) -> bytes | None:
     """
     Handles the possibility of a media file having multiple audio tracks.
 
@@ -287,7 +285,7 @@ def handle_multiple_audio_tracks(file_path: str, language: LanguageCode | None =
         If None, it will extract the first audio track.
 
     Returns:
-    io.BytesIO | None: The audio or None if no audio track was extracted.
+    bytes | None: The audio data as bytes, or None if no audio track was extracted.
     """
     audio_bytes = None
     audio_tracks = get_audio_tracks(file_path)

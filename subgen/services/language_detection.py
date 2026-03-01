@@ -6,10 +6,8 @@ import numpy as np
 from language_code import LanguageCode
 
 from subgen.config import (
-    custom_regroup,
     detect_language_length,
     detect_language_offset,
-    force_detected_language_to,
     kwargs,
     transcribe_or_translate,
 )
@@ -153,7 +151,7 @@ def detect_language_task(path: str, original_task_data: dict | None = None) -> N
             path,
             detect_language_offset,
             int(detect_language_length),
-        ).read()
+        )
 
         # Import model at function level to get the current (possibly re-loaded) reference
         from subgen.models.whisper_model import model as current_model

@@ -304,7 +304,7 @@ def gen_subtitles(
         # Extract audio from the file if it has multiple audio tracks
         extracted_audio_file = handle_multiple_audio_tracks(file_path, force_language)
         if extracted_audio_file:
-            data = extracted_audio_file.read()
+            data = extracted_audio_file
 
         args = {}
         display_name = os.path.basename(file_path)
