@@ -163,7 +163,8 @@ See [discussion #115](https://github.com/McCloudS/subgen/discussions/115#discuss
 | `MODEL_PATH` | `./models` | Where models are stored |
 | `COMPUTE_TYPE` | `auto` | Quantization type ([reference](https://github.com/OpenNMT/CTranslate2/blob/master/docs/quantization.md)) |
 | `WEBHOOK_PORT` | `9000` | Listening port |
-| `DEBUG` | `True` | Debug logging; also enables auto-reload on script changes |
+| `DEBUG` | `True` | Debug logging |
+| `RELOAD_SCRIPT_ON_CHANGE` | `False` | Auto-reload subgen when script file changes (development use) |
 | `UPDATE` | `False` | Pull latest subgen.py on container start (via launcher.py) |
 
 ### Transcription Behavior
@@ -185,7 +186,7 @@ See [discussion #115](https://github.com/McCloudS/subgen/discussions/115#discuss
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SUBTITLE_LANGUAGE_NAME` | `aa` | Language code used in the subtitle filename |
+| `SUBTITLE_LANGUAGE_NAME` | `''` | Language code used in the subtitle filename |
 | `SUBTITLE_LANGUAGE_NAMING_TYPE` | `ISO_639_2_B` | Naming format: `ISO_639_1`, `ISO_639_2_T`, `ISO_639_2_B`, `NAME`, or `NATIVE` |
 | `WORD_LEVEL_HIGHLIGHT` | `False` | Highlight each word as it's spoken |
 | `CUSTOM_REGROUP` | `cm_sl=84_sl=42++++++1` | Segment regrouping rules (`default` for stable-ts defaults) |
@@ -201,16 +202,16 @@ See [discussion #115](https://github.com/McCloudS/subgen/discussions/115#discuss
 |----------|---------|-------------|
 | `PROCESS_ADDED_MEDIA` | `True` | Generate subtitles when media is added |
 | `PROCESS_MEDIA_ON_PLAY` | `True` | Generate subtitles when media is played |
-| `SKIP_IF_INTERNAL_SUBTITLES_LANGUAGE` | `eng` | Skip if internal subs exist for this 3-letter code |
+| `SKIP_IF_INTERNAL_SUBTITLES_LANGUAGE` | `''` | Skip if internal subs exist for this language code (empty = disabled) |
 | `SKIP_IF_EXTERNAL_SUBTITLES_EXIST` | `False` | Skip if external `.srt` with matching language exists |
 | `SKIP_IF_TARGET_SUBTITLES_EXIST` | `True` | Skip if any subtitle in target language exists |
-| `SKIP_IF_AUDIO_TRACK_IS` | `''` | Pipe-separated ISO 639-2 codes; skip if audio matches |
+| `SKIP_IF_AUDIO_LANGUAGES` | `''` | Pipe-separated language codes; skip if audio track matches (legacy: `SKIP_IF_AUDIO_TRACK_IS`) |
 | `SKIP_ONLY_SUBGEN_SUBTITLES` | `False` | Only skip if existing subtitle has "subgen" in the name |
 | `SKIP_UNKNOWN_LANGUAGE` | `False` | Skip if file has no known audio language |
 | `SKIP_IF_NO_LANGUAGE_BUT_SUBTITLES_EXIST` | `False` | Skip if no audio language tag but subtitles exist |
-| `SKIP_SUBTITLE_LANGUAGES` | `''` | Pipe-separated 3-letter codes to never generate for (e.g. `eng\|deu`) |
-| `PREFERRED_AUDIO_LANGUAGE` | `eng` | Preferred audio track when multiple exist |
-| `PREFERRED_AUDIO_LANGUAGES` | `eng` | Pipe-separated list of preferred audio languages |
+| `SKIP_SUBTITLE_LANGUAGES` | `''` | Pipe-separated language codes to never generate for (e.g. `eng\|deu`) |
+| `PREFERRED_AUDIO_LANGUAGES` | `eng` | Pipe-separated list of preferred audio languages (in order of preference) |
+| `LIMIT_TO_PREFERRED_AUDIO_LANGUAGE` | `False` | Only transcribe files that have an audio track matching `PREFERRED_AUDIO_LANGUAGES` |
 
 ### Media Server
 
