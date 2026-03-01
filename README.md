@@ -4,6 +4,8 @@
 <details>
 <summary>Updates:</summary>
 
+Mar 2026: Added `transcribe_and_translate` mode — a two-pass approach that first transcribes audio with accurate timing, then translates non-English segments to English using offline translation (argostranslate + langdetect). New env vars: `TRANSLATE_SOURCE_LANGUAGES`, `DETECT_CONFIDENCE_THRESHOLD`.
+
 Feb 2026: Contributor helped cut the GPU container size in half.  Added `ASR_TIMEOUT` as environment variable to timeout ASR endpoint transcriptions after X seconds.
 
 31 Jan 2026: Added the ability to run the container 'rootless', accepts `PUID` and `PGID` as environment variables and _should_ take `user` at a container level (Podman), let me know!.
@@ -219,7 +221,9 @@ The following environment variables are available in Docker.  They will default 
 | PATH_MAPPING_FROM         | '/tv'                  | This is the path of my media relative to my Plex server                                                                                                                                                                                                                                   |
 | PATH_MAPPING_TO           | '/Volumes/TV'          | This is the path of that same folder relative to my Mac Mini that will run the script                                                                                                                                                                                                     |
 | TRANSCRIBE_FOLDERS        | ''                     | Takes a pipe '\|' separated list (For example: /tv\|/movies\|/familyvideos) and iterates through and adds those files to be queued for subtitle generation if they don't have internal subtitles                                                                                              |
-| TRANSCRIBE_OR_TRANSLATE   | 'transcribe'            | Takes either 'transcribe' or 'translate'.  Transcribe will transcribe the audio in the same language as the input. Translate will transcribe and translate into English. | 
+| TRANSCRIBE_OR_TRANSLATE   | 'transcribe'            | Takes 'transcribe', 'translate', or 'transcribe_and_translate'. Transcribe will transcribe the audio in the same language as the input. Translate will transcribe and translate into English in a single pass. Transcribe_and_translate uses a two-pass approach: first transcribes with accurate timing, then translates non-English segments to English offline — produces better results than single-pass translate for mixed-language content. |
+| TRANSLATE_SOURCE_LANGUAGES | 'fr,es,de,it,pt,ja,ko,zh,ru' | Comma-separated list of language codes to install offline translation models for (source→English). Used with `transcribe_and_translate` mode. Models are downloaded once and cached in `MODEL_PATH`. |
+| DETECT_CONFIDENCE_THRESHOLD | 0.7 | Minimum confidence (0.0–1.0) that a segment is English before skipping translation. Used with `transcribe_and_translate` mode. Lower values = more segments kept as-is, higher values = more segments translated. |
 | COMPUTE_TYPE | 'auto' | Set compute-type using the following information: https://github.com/OpenNMT/CTranslate2/blob/master/docs/quantization.md |
 | DEBUG                     | True                  | Provides some debug data that can be helpful to troubleshoot path mapping and other issues. Fun fact, if this is set to true, any modifications to the script will auto-reload it (if it isn't actively transcoding).  Useful to make small tweaks without re-downloading the whole file. |
 | FORCE_DETECTED_LANGUAGE_TO | '' | This is to force the model to a language instead of the detected one, takes a 2 letter language code.  For example, your audio is French but keeps detecting as English, you would set it to 'fr' |

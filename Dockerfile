@@ -16,6 +16,7 @@ WORKDIR /subgen
 
 # Copy files
 COPY launcher.py subgen.py language_code.py /subgen/
+COPY subgen/ /subgen/subgen/
 
 # --- FIX 2: Create a dedicated cache directory ---
 # This prevents the app from trying to write to root-owned /.cache
