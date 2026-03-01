@@ -12,6 +12,7 @@ from subgen.config import (
     kwargs as whisper_kwargs,
     lrc_for_audio_files,
     limit_to_preferred_audio_languages,
+    min_subtitle_duration,
     namesublang,
     only_skip_if_subgen_subtitle,
     preferred_audio_languages,
@@ -46,6 +47,27 @@ from subgen.services.subtitle import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Minimum subtitle duration enforcement
+# ---------------------------------------------------------------------------
+
+
+def enforce_min_subtitle_duration(result, min_duration: float) -> None:
+    """Extend short subtitle segments so they stay on screen long enough to read.
+
+    Modifies *result* in place.  Any segment whose duration is less than
+    *min_duration* (seconds) gets its end time pushed out.  Overlapping with
+    the next segment is intentional — media players stack overlapping SRT
+    entries on screen, which is exactly the desired behaviour.
+    """
+    if min_duration <= 0:
+        return
+    for segment in result.segments:
+        duration = segment.end - segment.start
+        if duration < min_duration:
+            segment.end = segment.start + min_duration
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +333,7 @@ def gen_subtitles(
         )
 
         appendLine(result)
+        enforce_min_subtitle_duration(result, min_subtitle_duration)
 
         # Pass 2: Translate non-English segments if using two-pass mode
         if transcribe_or_translate_param == "transcribe_and_translate":
@@ -414,6 +437,7 @@ def asr_task_worker(task_data: dict) -> None:
             task=actual_task, language=language, **args, verbose=None
         )
         appendLine(result)
+        enforce_min_subtitle_duration(result, min_subtitle_duration)
 
         # Pass 2: Translate non-English segments if using two-pass mode
         if requested_task == "transcribe_and_translate":
