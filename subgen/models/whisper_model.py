@@ -28,21 +28,28 @@ from subgen.queue.deduplicated_queue import task_queue
 model = None
 model_cleanup_timer: Timer | None = None
 model_cleanup_lock: Lock = Lock()
+model_load_lock: Lock = Lock()
+
+# Track direct model usage outside the queue (e.g. /detect-language endpoint)
+# so delete_model() won't unload while a direct task is still running.
+active_direct_tasks: int = 0
+active_direct_tasks_lock: Lock = Lock()
 
 
 def start_model() -> None:
     """Load the Whisper model into memory if it is not already loaded."""
     global model
-    if model is None:
-        logging.debug("Model was purged, need to re-create")
-        model = stable_whisper.load_faster_whisper(
-            _whisper_model_name,
-            download_root=model_location,
-            device=transcribe_device,
-            cpu_threads=whisper_threads,
-            num_workers=concurrent_transcriptions,
-            compute_type=compute_type,
-        )
+    with model_load_lock:
+        if model is None:
+            logging.debug("Model was purged, need to re-create")
+            model = stable_whisper.load_faster_whisper(
+                _whisper_model_name,
+                download_root=model_location,
+                device=transcribe_device,
+                cpu_threads=whisper_threads,
+                num_workers=concurrent_transcriptions,
+                compute_type=compute_type,
+            )
 
 
 def schedule_model_cleanup() -> None:
@@ -70,8 +77,11 @@ def perform_model_cleanup() -> None:
     with model_cleanup_lock:
         logging.debug("Executing scheduled model cleanup")
 
-        if clear_vram_on_complete and task_queue.is_idle():
-            logging.debug("Queue idle; clearing model from memory.")
+        with active_direct_tasks_lock:
+            system_is_idle = task_queue.is_idle() and active_direct_tasks == 0
+
+        if clear_vram_on_complete and system_is_idle:
+            logging.debug("Queue and direct tasks idle; clearing model from memory.")
             if model:
                 try:
                     model.model.unload_model()
@@ -113,8 +123,11 @@ def delete_model() -> None:
     if not clear_vram_on_complete:
         return
 
-    # 2. Only schedule cleanup if the queue is empty AND no other workers are processing.
-    if task_queue.is_idle():
+    # 2. Only schedule cleanup if the queue is empty AND no direct tasks are running.
+    with active_direct_tasks_lock:
+        system_is_idle = task_queue.is_idle() and active_direct_tasks == 0
+
+    if system_is_idle:
         schedule_model_cleanup()
     else:
         # If there are items left in the queue, we simply do nothing.

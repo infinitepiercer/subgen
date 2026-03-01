@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 
 import numpy as np
 from language_code import LanguageCode
@@ -50,6 +51,32 @@ from subgen.services.subtitle import (
 from subgen.services.subtitle_filter import filter_segments
 
 logger = logging.getLogger(__name__)
+
+_UNEXPECTED_KWARG_RE = re.compile(r"got an unexpected keyword argument '(\w+)'")
+
+
+def _transcribe_with_kwarg_filter(model, **kwargs):
+    """Call model.transcribe(), automatically stripping unsupported kwargs.
+
+    Some SUBGEN_KWARGS entries (e.g. ``nonspeech_skip``) may not be accepted by
+    the current versions of stable-ts-whisperless / faster-whisper.  Rather
+    than maintaining a static allow-list we let the call fail, parse the
+    offending parameter name from the TypeError, remove it, and retry.
+    """
+    while True:
+        try:
+            return model.transcribe(**kwargs)
+        except TypeError as exc:
+            match = _UNEXPECTED_KWARG_RE.search(str(exc))
+            if match and match.group(1) in kwargs:
+                bad = match.group(1)
+                del kwargs[bad]
+                logging.warning(
+                    "Removed unsupported SUBGEN_KWARGS key '%s' — "
+                    "not accepted by transcribe()", bad,
+                )
+            else:
+                raise
 
 
 # ---------------------------------------------------------------------------
@@ -399,8 +426,9 @@ def gen_subtitles(
         # Import model at function level to get the current (possibly re-loaded) reference
         from subgen.models.whisper_model import model as current_model
 
-        result = current_model.transcribe(
-            data,
+        result = _transcribe_with_kwarg_filter(
+            current_model,
+            audio=data,
             language=force_language.to_iso_639_1(),
             task=actual_task,
             verbose=None,
@@ -522,8 +550,8 @@ def asr_task_worker(task_data: dict) -> None:
         from subgen.models.whisper_model import model as current_model
 
         # Perform transcription
-        result = current_model.transcribe(
-            task=actual_task, language=language, **args, verbose=None
+        result = _transcribe_with_kwarg_filter(
+            current_model, task=actual_task, language=language, **args, verbose=None
         )
         appendLine(result)
         if filter_subtitles:

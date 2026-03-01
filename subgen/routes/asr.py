@@ -1,5 +1,6 @@
 """ASR (Automatic Speech Recognition) endpoint with hash-based deduplication and blocking."""
 
+import asyncio
 import logging
 from typing import Union
 
@@ -90,8 +91,8 @@ async def asr(
         else:
             logging.info(f"ASR task {task_id} already queued/processing - waiting for result")
 
-        # BLOCK HERE until worker completes (respects concurrent_transcriptions)
-        if task_result.wait(timeout=asr_timeout):
+        # Offload blocking wait to a thread so FastAPI can still serve /status etc.
+        if await asyncio.to_thread(task_result.wait, asr_timeout):
             if task_result.error:
                 logging.error(f"ASR task {task_id} failed: {task_result.error}")
                 return {
