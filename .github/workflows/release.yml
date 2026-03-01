@@ -99,6 +99,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
+          cache-from: type=gha,scope=gpu-${{ steps.prep.outputs.pair }}
+          cache-to: type=gha,mode=max,scope=gpu-${{ steps.prep.outputs.pair }}
 
       - name: Export digest
         run: |
@@ -157,6 +159,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
+          cache-from: type=gha,scope=cpu-${{ steps.prep.outputs.pair }}
+          cache-to: type=gha,mode=max,scope=cpu-${{ steps.prep.outputs.pair }}
 
       - name: Export digest
         run: |
