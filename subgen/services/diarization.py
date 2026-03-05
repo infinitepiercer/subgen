@@ -9,6 +9,7 @@ output segment belongs to exactly one speaker.
 import logging
 import os
 import tempfile
+import wave
 from typing import List, Tuple, Union
 
 from subgen.config import enable_diarization  # noqa: F401 — imported for caller convenience
@@ -35,15 +36,30 @@ def _ensure_diarization_model(device: str) -> None:
 
 
 def _write_temp_wav(audio_bytes: Union[bytes, bytearray]) -> str:
-    """Write raw audio bytes to a temporary WAV file and return the path.
+    """Write audio bytes to a temporary WAV file and return the path.
+
+    If the bytes already have a WAV header (RIFF…WAVE), they are written
+    as-is.  Otherwise the bytes are assumed to be raw PCM int16 at 16 kHz
+    mono and a proper WAV header is prepended so torchaudio can read the
+    file.
 
     The caller is responsible for deleting the file when done.
     """
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     try:
-        tmp.write(audio_bytes)
+        if audio_bytes[:4] == b"RIFF" and audio_bytes[8:12] == b"WAVE":
+            tmp.write(audio_bytes)
+        else:
+            # Raw PCM — wrap with a WAV header (16 kHz, mono, 16-bit)
+            tmp.close()
+            with wave.open(tmp.name, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(audio_bytes)
     finally:
-        tmp.close()
+        if not tmp.closed:
+            tmp.close()
     logger.debug("Wrote temporary WAV for diarization: %s", tmp.name)
     return tmp.name
 
