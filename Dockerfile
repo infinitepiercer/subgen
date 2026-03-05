@@ -26,6 +26,7 @@ RUN python3 -m pip install -U --no-cache-dir -r /tmp/requirements.txt && \
 # Layer 3b: Conditional NeMo installation for Parakeet backend
 COPY requirements-parakeet.txt /tmp/requirements-parakeet.txt
 RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
+        python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
         python3 -m pip install --no-cache-dir -r /tmp/requirements-parakeet.txt ; \
     fi && \
     rm /tmp/requirements-parakeet.txt
