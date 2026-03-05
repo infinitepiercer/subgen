@@ -29,8 +29,13 @@ DiarSegment = Tuple[str, float, float, int]
 
 
 def _patch_wespeaker_subsegment() -> None:
-    """Fix wespeaker bug: compute_features returns [1,T,D] but subsegment expects [T,D]."""
+    """Fix wespeaker bug: compute_features returns [1,T,D] but subsegment expects [T,D].
+
+    wespeaker.cli.speaker does ``from wespeaker.diar.extract_emb import subsegment``
+    so we must patch the reference on *both* modules for the fix to take effect.
+    """
     import wespeaker.diar.extract_emb as _emb  # type: ignore[import-not-found]
+    import wespeaker.cli.speaker as _speaker  # type: ignore[import-not-found]
 
     _orig = _emb.subsegment
     if getattr(_orig, "_patched", False):
@@ -43,6 +48,7 @@ def _patch_wespeaker_subsegment() -> None:
 
     _fixed_subsegment._patched = True
     _emb.subsegment = _fixed_subsegment
+    _speaker.subsegment = _fixed_subsegment
     logger.debug("Patched wespeaker subsegment to handle 3D fbank tensors")
 
 
