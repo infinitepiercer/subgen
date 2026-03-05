@@ -28,11 +28,30 @@ DiarSegment = Tuple[str, float, float, int]
 # ---------------------------------------------------------------------------
 
 
+def _patch_wespeaker_subsegment() -> None:
+    """Fix wespeaker bug: compute_features returns [1,T,D] but subsegment expects [T,D]."""
+    import wespeaker.diar.extract_emb as _emb  # type: ignore[import-not-found]
+
+    _orig = _emb.subsegment
+    if getattr(_orig, "_patched", False):
+        return
+
+    def _fixed_subsegment(fbank, *args, **kwargs):
+        if hasattr(fbank, "ndim") and fbank.ndim == 3:
+            fbank = fbank.squeeze(0)
+        return _orig(fbank, *args, **kwargs)
+
+    _fixed_subsegment._patched = True
+    _emb.subsegment = _fixed_subsegment
+    logger.debug("Patched wespeaker subsegment to handle 3D fbank tensors")
+
+
 def _ensure_diarization_model(device: str) -> None:
     """Lazy-load the WeSpeaker model if it has not been loaded yet."""
     if diarization_model_module.model is None:
         logger.info("Diarization model not loaded — loading now on %s", device)
         start_diarization_model(device)
+        _patch_wespeaker_subsegment()
 
 
 def _write_temp_wav(audio_bytes: Union[bytes, bytearray]) -> str:
