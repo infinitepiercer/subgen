@@ -15,6 +15,7 @@ from typing import Optional
 import torch
 
 from subgen.config import (
+    compute_type,
     parakeet_model_name as _parakeet_model_name,
     model_location,
     transcribe_device,
@@ -80,6 +81,19 @@ def start_model() -> None:
                 )
 
             model.eval()
+
+            # Use fp16 on CUDA to halve VRAM usage during inference.
+            # Controlled by COMPUTE_TYPE env var: "float16"/"auto" → fp16, "float32" → fp32.
+            use_fp16 = (
+                device == "cuda"
+                and torch.cuda.is_available()
+                and compute_type in ("auto", "float16", "int8_float16")
+            )
+            if use_fp16:
+                model = model.half()
+                logger.info("Parakeet model cast to fp16 (compute_type=%s)", compute_type)
+            else:
+                logger.info("Parakeet model using fp32 (compute_type=%s)", compute_type)
 
             # For longer audio, switch to local attention to avoid OOM.
             # This sets a window size of 64 for each of the 6 conformer layers.

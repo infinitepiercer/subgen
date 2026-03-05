@@ -9,6 +9,7 @@ from language_code import LanguageCode
 
 from subgen.config import (
     asr_engine,
+    compute_type,
     custom_regroup,
     enable_diarization,
     filter_subtitles,
@@ -113,14 +114,62 @@ def _delete_model() -> None:
 # ---------------------------------------------------------------------------
 
 
+_PARAKEET_CHUNK_SECONDS: int = 600  # 10 minutes per chunk
+
+
+def _get_audio_duration(audio_path: str) -> float:
+    """Return the duration of an audio file in seconds using ffprobe."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def _split_audio_chunks(audio_path: str, chunk_seconds: int) -> list[str]:
+    """Split an audio file into chunks using ffmpeg. Returns list of temp file paths."""
+    import subprocess
+    import tempfile
+
+    duration = _get_audio_duration(audio_path)
+    if duration <= 0 or duration <= chunk_seconds:
+        return [audio_path]
+
+    chunk_paths: list[str] = []
+    offset = 0.0
+    while offset < duration:
+        chunk_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        chunk_file.close()
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", audio_path, "-ss", str(offset),
+             "-t", str(chunk_seconds), "-ar", "16000", "-ac", "1",
+             "-c:a", "pcm_s16le", chunk_file.name],
+            capture_output=True, timeout=120,
+        )
+        chunk_paths.append(chunk_file.name)
+        offset += chunk_seconds
+
+    return chunk_paths
+
+
 def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object:
     """Transcribe using NVIDIA Parakeet-TDT model via NeMo.
 
     Accepts audio as a file path (str), raw bytes, or a numpy array.
     Returns a WhisperResult-compatible object via the result adapter.
+
+    Long audio files are automatically split into chunks to avoid CUDA OOM.
+    Inference runs in fp16 via torch.cuda.amp.autocast for reduced VRAM usage.
     """
     import tempfile
     import wave
+
+    import torch
 
     from subgen.models.parakeet_model import model as parakeet_model
     from subgen.models.result_adapter import parakeet_output_to_whisper_result
@@ -149,11 +198,65 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
     else:
         raise TypeError(f"Unsupported audio data type: {type(audio_data)}")
 
+    chunk_paths: list[str] = []
     try:
-        output = parakeet_model.transcribe([audio_path], timestamps=True)
-        result = parakeet_output_to_whisper_result(output[0], language=language or "en")
+        chunk_paths = _split_audio_chunks(audio_path, _PARAKEET_CHUNK_SECONDS)
+        is_chunked = len(chunk_paths) > 1 or chunk_paths[0] != audio_path
+
+        if is_chunked:
+            logger.info("Audio split into %d chunks of %ds each", len(chunk_paths), _PARAKEET_CHUNK_SECONDS)
+
+        all_word_timestamps: list[dict] = []
+        full_text_parts: list[str] = []
+        time_offset = 0.0
+
+        use_fp16 = (
+            transcribe_device.lower() == "cuda"
+            and torch.cuda.is_available()
+            and compute_type in ("auto", "float16", "int8_float16")
+        )
+
+        for i, chunk_path in enumerate(chunk_paths):
+            if is_chunked:
+                logger.info("Transcribing chunk %d/%d (offset %.1fs)", i + 1, len(chunk_paths), time_offset)
+
+            with torch.cuda.amp.autocast(enabled=use_fp16):
+                output = parakeet_model.transcribe([chunk_path], timestamps=True)
+
+            chunk_output = output[0]
+            chunk_text = getattr(chunk_output, "text", "") or ""
+            timestamp_data = getattr(chunk_output, "timestamp", {}) or {}
+            word_ts = timestamp_data.get("word", [])
+
+            # Offset timestamps for chunked audio
+            if time_offset > 0 and word_ts:
+                for w in word_ts:
+                    w["start"] = float(w.get("start", 0.0)) + time_offset
+                    w["end"] = float(w.get("end", 0.0)) + time_offset
+
+            all_word_timestamps.extend(word_ts)
+            full_text_parts.append(chunk_text)
+            time_offset += _PARAKEET_CHUNK_SECONDS
+
+        # Build a combined result using the adapter
+        if is_chunked and all_word_timestamps:
+            # Create a synthetic nemo output for the adapter
+            class _CombinedOutput:
+                def __init__(self, text: str, word_timestamps: list[dict]):
+                    self.text = text
+                    self.timestamp = {"word": word_timestamps}
+
+            combined = _CombinedOutput(" ".join(full_text_parts), all_word_timestamps)
+            result = parakeet_output_to_whisper_result(combined, language=language or "en")
+        else:
+            result = parakeet_output_to_whisper_result(output[0], language=language or "en")
+
         return result
     finally:
+        # Clean up chunk temp files (but not the original if it wasn't a temp)
+        for cp in chunk_paths:
+            if cp != audio_path and os.path.exists(cp):
+                os.unlink(cp)
         if cleanup_path and os.path.exists(cleanup_path):
             os.unlink(cleanup_path)
 
