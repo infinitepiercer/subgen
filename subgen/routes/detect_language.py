@@ -9,14 +9,10 @@ from fastapi import APIRouter, File, UploadFile, Query
 from language_code import LanguageCode
 
 from subgen.config import (
+    asr_engine,
     force_detected_language_to,
     detect_language_length,
     detect_language_offset,
-)
-from subgen.models.whisper_model import (
-    start_model,
-    delete_model,
-    active_direct_tasks_lock,
 )
 from subgen.media.audio import extract_audio_segment_from_content, get_audio_chunk
 
@@ -31,12 +27,23 @@ async def detect_language(
     detect_lang_length: int = Query(default=detect_language_length),
     detect_lang_offset: int = Query(default=detect_language_offset),
 ):
-    from subgen.models.whisper_model import active_direct_tasks as _adt
-    import subgen.models.whisper_model as _model_mod
-
     if force_detected_language_to:
         await audio_file.close()
         return {"detected_language": force_detected_language_to.to_name(), "language_code": force_detected_language_to.to_iso_639_1()}
+
+    # Parakeet is English-only — skip Whisper-based detection and return English.
+    if asr_engine == 'parakeet':
+        await audio_file.close()
+        logging.info("Parakeet engine is English-only; returning 'en' for language detection")
+        return {"detected_language": "English", "language_code": "en"}
+
+    # --- Whisper-based language detection ---
+    from subgen.models.whisper_model import (
+        start_model,
+        delete_model,
+        active_direct_tasks_lock,
+    )
+    import subgen.models.whisper_model as _model_mod
 
     task_started = False
     try:

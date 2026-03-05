@@ -8,6 +8,7 @@ import numpy as np
 from language_code import LanguageCode
 
 from subgen.config import (
+    asr_engine,
     custom_regroup,
     enable_diarization,
     filter_subtitles,
@@ -40,7 +41,8 @@ from subgen.media.audio import (
     handle_multiple_audio_tracks,
 )
 from subgen.media.file_utils import has_audio, isAudioFileExtension, write_lrc
-from subgen.models.whisper_model import delete_model, start_model
+# Model lifecycle functions are imported conditionally based on asr_engine.
+# Direct imports are deferred to the functions that need them.
 from subgen.queue.deduplicated_queue import task_queue
 from subgen.services.subtitle import (
     appendLine,
@@ -82,11 +84,83 @@ def _transcribe_with_kwarg_filter(model, **kwargs):
 
 
 # ---------------------------------------------------------------------------
-# Regroup string pre-processing (stable-ts pad bug workaround)
+# ASR engine conditional model lifecycle helpers
 # ---------------------------------------------------------------------------
 
 
-import re
+def _start_model() -> None:
+    """Load the appropriate ASR model based on the configured engine."""
+    if asr_engine == 'parakeet':
+        from subgen.models.parakeet_model import start_model as start_parakeet
+        start_parakeet()
+    else:
+        from subgen.models.whisper_model import start_model as start_whisper
+        start_whisper()
+
+
+def _delete_model() -> None:
+    """Schedule cleanup for the appropriate ASR model based on the configured engine."""
+    if asr_engine == 'parakeet':
+        from subgen.models.parakeet_model import delete_model as delete_parakeet
+        delete_parakeet()
+    else:
+        from subgen.models.whisper_model import delete_model as delete_whisper
+        delete_whisper()
+
+
+# ---------------------------------------------------------------------------
+# Parakeet transcription backend
+# ---------------------------------------------------------------------------
+
+
+def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object:
+    """Transcribe using NVIDIA Parakeet-TDT model via NeMo.
+
+    Accepts audio as a file path (str), raw bytes, or a numpy array.
+    Returns a WhisperResult-compatible object via the result adapter.
+    """
+    import tempfile
+    import wave
+
+    from subgen.models.parakeet_model import model as parakeet_model
+    from subgen.models.result_adapter import parakeet_output_to_whisper_result
+
+    cleanup_path: str | None = None
+
+    # Parakeet requires a file path -- convert other formats to a temp WAV.
+    if isinstance(audio_data, (bytes, bytearray)):
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            f.write(audio_data)
+            audio_path = f.name
+        cleanup_path = audio_path
+    elif isinstance(audio_data, str):
+        audio_path = audio_data
+    elif hasattr(audio_data, '__array__'):  # numpy array
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            audio_path = f.name
+        # Write as 16-bit PCM WAV at 16 kHz mono
+        audio_int16 = (audio_data * 32768.0).astype(np.int16)
+        with wave.open(audio_path, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(audio_int16.tobytes())
+        cleanup_path = audio_path
+    else:
+        raise TypeError(f"Unsupported audio data type: {type(audio_data)}")
+
+    try:
+        output = parakeet_model.transcribe([audio_path], timestamps=True)
+        result = parakeet_output_to_whisper_result(output[0], language=language or "en")
+        return result
+    finally:
+        if cleanup_path and os.path.exists(cleanup_path):
+            os.unlink(cleanup_path)
+
+
+# ---------------------------------------------------------------------------
+# Regroup string pre-processing (stable-ts pad bug workaround)
+# ---------------------------------------------------------------------------
 
 _PAD_PATTERN = re.compile(r'_p=([^_]+)')
 
@@ -386,7 +460,7 @@ def gen_subtitles(
     correct severity with a traceback.
     """
     try:
-        start_model()
+        _start_model()
 
         # Check if the file is an audio file before trying to extract audio
         file_name, file_extension = os.path.splitext(file_path)
@@ -406,36 +480,47 @@ def gen_subtitles(
             if normalized is not None:
                 data = normalized
 
-        args = {}
-        display_name = os.path.basename(file_path)
-        args["progress_callback"] = ProgressHandler(display_name)
-
-        # Strip pad from regroup string (stable-ts bug workaround)
-        start_pad, end_pad = 0.0, 0.0
-        if custom_regroup and custom_regroup.lower() != "default":
-            cleaned_regroup, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
-            if cleaned_regroup:
-                args["regroup"] = cleaned_regroup
-
-        args.update(whisper_kwargs)
-
-        # Determine the actual Whisper task
+        # Determine the actual task
         if transcribe_or_translate_param == "transcribe_and_translate":
             actual_task = "transcribe"
         else:
             actual_task = transcribe_or_translate_param
 
-        # Import model at function level to get the current (possibly re-loaded) reference
-        from subgen.models.whisper_model import model as current_model
+        # Strip pad from regroup string (stable-ts bug workaround)
+        start_pad, end_pad = 0.0, 0.0
+        if custom_regroup and custom_regroup.lower() != "default":
+            cleaned_regroup, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
 
-        result = _transcribe_with_kwarg_filter(
-            current_model,
-            audio=data,
-            language=force_language.to_iso_639_1(),
-            task=actual_task,
-            verbose=None,
-            **args,
-        )
+        if asr_engine == 'parakeet':
+            result = _transcribe_parakeet(data, force_language.to_iso_639_1(), actual_task)
+            # Apply custom_regroup via stable-ts post-processing if requested
+            if custom_regroup and custom_regroup.lower() != "default":
+                cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
+                if cleaned_regroup_str and hasattr(result, 'regroup'):
+                    result.regroup(cleaned_regroup_str)
+        else:
+            args = {}
+            display_name = os.path.basename(file_path)
+            args["progress_callback"] = ProgressHandler(display_name)
+
+            if custom_regroup and custom_regroup.lower() != "default":
+                cleaned_regroup_str, _, _ = strip_pad_from_regroup(custom_regroup)
+                if cleaned_regroup_str:
+                    args["regroup"] = cleaned_regroup_str
+
+            args.update(whisper_kwargs)
+
+            # Import model at function level to get the current (possibly re-loaded) reference
+            from subgen.models.whisper_model import model as current_model
+
+            result = _transcribe_with_kwarg_filter(
+                current_model,
+                audio=data,
+                language=force_language.to_iso_639_1(),
+                task=actual_task,
+                verbose=None,
+                **args,
+            )
 
         appendLine(result)
         if filter_subtitles:
@@ -484,7 +569,7 @@ def gen_subtitles(
         )
 
     finally:
-        delete_model()
+        _delete_model()
 
 
 # ---------------------------------------------------------------------------
@@ -513,17 +598,13 @@ def asr_task_worker(task_data: dict) -> None:
         encode = task_data["encode"]
         output_format = task_data.get("output", "srt")  # BUG FIX: support output format selection
 
-        # Determine the actual Whisper task
+        # Determine the actual task
         if requested_task == "transcribe_and_translate":
             actual_task = "transcribe"
         else:
             actual_task = requested_task
 
-        start_model()
-
-        args = {}
-        display_name = os.path.basename(video_file) if video_file else task_id
-        args["progress_callback"] = ProgressHandler(display_name)
+        _start_model()
 
         # Normalize audio loudness for better transcription accuracy
         if normalize_audio_enabled and encode:
@@ -532,34 +613,61 @@ def asr_task_worker(task_data: dict) -> None:
             if normalized is not None:
                 file_content = normalized
 
-        # Handle audio encoding
-        if encode:
-            args["audio"] = file_content
-        else:
-            args["audio"] = (
-                np.frombuffer(file_content, np.int16)
-                .flatten()
-                .astype(np.float32)
-                / 32768.0
-            )
-            args["input_sr"] = 16000
-
         # Strip pad from regroup string (stable-ts bug workaround)
         start_pad, end_pad = 0.0, 0.0
         if custom_regroup and custom_regroup.lower() != "default":
             cleaned_regroup, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
-            if cleaned_regroup:
-                args["regroup"] = cleaned_regroup
 
-        args.update(whisper_kwargs)
+        if asr_engine == 'parakeet':
+            # Prepare audio data for Parakeet
+            if encode:
+                audio_data = file_content
+            else:
+                audio_data = (
+                    np.frombuffer(file_content, np.int16)
+                    .flatten()
+                    .astype(np.float32)
+                    / 32768.0
+                )
 
-        # Import model at function level to get the current (possibly re-loaded) reference
-        from subgen.models.whisper_model import model as current_model
+            result = _transcribe_parakeet(audio_data, language, actual_task)
+            # Apply custom_regroup via stable-ts post-processing if requested
+            if custom_regroup and custom_regroup.lower() != "default":
+                cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
+                if cleaned_regroup_str and hasattr(result, 'regroup'):
+                    result.regroup(cleaned_regroup_str)
+        else:
+            args = {}
+            display_name = os.path.basename(video_file) if video_file else task_id
+            args["progress_callback"] = ProgressHandler(display_name)
 
-        # Perform transcription
-        result = _transcribe_with_kwarg_filter(
-            current_model, task=actual_task, language=language, **args, verbose=None
-        )
+            # Handle audio encoding
+            if encode:
+                args["audio"] = file_content
+            else:
+                args["audio"] = (
+                    np.frombuffer(file_content, np.int16)
+                    .flatten()
+                    .astype(np.float32)
+                    / 32768.0
+                )
+                args["input_sr"] = 16000
+
+            if custom_regroup and custom_regroup.lower() != "default":
+                cleaned_regroup_str, _, _ = strip_pad_from_regroup(custom_regroup)
+                if cleaned_regroup_str:
+                    args["regroup"] = cleaned_regroup_str
+
+            args.update(whisper_kwargs)
+
+            # Import model at function level to get the current (possibly re-loaded) reference
+            from subgen.models.whisper_model import model as current_model
+
+            # Perform transcription
+            result = _transcribe_with_kwarg_filter(
+                current_model, task=actual_task, language=language, **args, verbose=None
+            )
+
         appendLine(result)
         if filter_subtitles:
             filter_segments(result)
@@ -609,4 +717,4 @@ def asr_task_worker(task_data: dict) -> None:
             result_container.set_error(str(e))
 
     finally:
-        delete_model()
+        _delete_model()

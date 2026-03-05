@@ -6,6 +6,7 @@ import numpy as np
 from language_code import LanguageCode
 
 from subgen.config import (
+    asr_engine,
     detect_language_length,
     detect_language_offset,
     kwargs,
@@ -13,7 +14,6 @@ from subgen.config import (
 )
 from subgen.logging_setup import ProgressHandler
 from subgen.media.audio import extract_audio_segment_to_memory
-from subgen.models.whisper_model import delete_model, start_model
 from subgen.queue.deduplicated_queue import task_queue
 
 
@@ -36,6 +36,19 @@ def detect_language_from_upload(task_data: dict) -> None:
     result_container = task_data.get("result_container")
 
     try:
+        # Parakeet is English-only — skip Whisper-based detection.
+        if asr_engine == 'parakeet':
+            detected_language = LanguageCode.ENGLISH
+            logging.info(
+                "Parakeet engine is English-only; returning 'en' for language detection - ID: %s",
+                task_id,
+            )
+            if result_container:
+                result_container.set_result(
+                    {"detected_language": "English", "language_code": "en"}
+                )
+            return
+
         video_file = task_data.get("video_file")
         file_content = task_data["audio_content"]
         encode = task_data["encode"]
@@ -53,6 +66,7 @@ def detect_language_from_upload(task_data: dict) -> None:
             ),
         )
 
+        from subgen.models.whisper_model import start_model, delete_model
         start_model()
 
         args = {}
@@ -122,7 +136,9 @@ def detect_language_from_upload(task_data: dict) -> None:
             result_container.set_error(str(e))
 
     finally:
-        delete_model()
+        if asr_engine != 'parakeet':
+            from subgen.models.whisper_model import delete_model
+            delete_model()
 
 
 # ---------------------------------------------------------------------------
@@ -138,35 +154,46 @@ def detect_language_task(path: str, original_task_data: dict | None = None) -> N
     detected_language = LanguageCode.NONE
 
     try:
-        logging.info(
-            "Detecting language of file: %s (%ss starting at %ss)",
-            path,
-            detect_language_length,
-            detect_language_offset,
-        )
+        # Parakeet is English-only — skip Whisper-based detection.
+        if asr_engine == 'parakeet':
+            detected_language = LanguageCode.ENGLISH
+            logging.info(
+                "Parakeet engine is English-only; returning 'en' for language detection of %s",
+                path,
+            )
+        else:
+            logging.info(
+                "Detecting language of file: %s (%ss starting at %ss)",
+                path,
+                detect_language_length,
+                detect_language_offset,
+            )
 
-        start_model()
+            from subgen.models.whisper_model import start_model
+            start_model()
 
-        audio_segment = extract_audio_segment_to_memory(
-            path,
-            detect_language_offset,
-            int(detect_language_length),
-        )
+            audio_segment = extract_audio_segment_to_memory(
+                path,
+                detect_language_offset,
+                int(detect_language_length),
+            )
 
-        # Import model at function level to get the current (possibly re-loaded) reference
-        from subgen.models.whisper_model import model as current_model
+            # Import model at function level to get the current (possibly re-loaded) reference
+            from subgen.models.whisper_model import model as current_model
 
-        detected_language = LanguageCode.from_name(
-            current_model.transcribe(audio_segment).language
-        )
+            detected_language = LanguageCode.from_name(
+                current_model.transcribe(audio_segment).language
+            )
 
-        logging.info("Detected language: %s", detected_language.to_name())
+            logging.info("Detected language: %s", detected_language.to_name())
 
     except Exception as e:
         logging.error("Error detecting language for file: %s", e, exc_info=True)
 
     finally:
-        delete_model()
+        if asr_engine != 'parakeet':
+            from subgen.models.whisper_model import delete_model
+            delete_model()
 
         # Queue transcription with detected language
         task_data = {

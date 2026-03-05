@@ -39,6 +39,12 @@ jellyfintoken: str = get_env_with_fallback('JELLYFIN_TOKEN', 'JELLYFINTOKEN', 't
 jellyfinserver: str = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER', 'http://192.168.1.111:8096')
 
 # ---------------------------------------------------------------------------
+# ASR Backend Selection
+# ---------------------------------------------------------------------------
+asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper' or 'parakeet'
+parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-0.6b-v3')
+
+# ---------------------------------------------------------------------------
 # Whisper Configuration
 # ---------------------------------------------------------------------------
 whisper_model: str = os.getenv('WHISPER_MODEL', 'medium')

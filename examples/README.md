@@ -6,12 +6,14 @@ Pick the example closest to your setup and copy it into your `docker-compose.yml
 |---------|:---:|----------|
 | [gpu-english](docker-compose.gpu-english.yml) | Yes | English media library — forced English prevents hallucinations during silence |
 | [gpu-multilingual](docker-compose.gpu-multilingual.yml) | Yes | Mixed-language library (anime, foreign films) — auto-detects audio language |
+| [gpu-parakeet](docker-compose.gpu-parakeet.yml) | Yes | NVIDIA Parakeet TDT — fast English ASR, less hallucination-prone than Whisper |
 | [cpu](docker-compose.cpu.yml) | No | No NVIDIA GPU — uses lighter model and CPU image |
 | [bazarr](docker-compose.bazarr.yml) | Yes | Bazarr Whisper provider — Bazarr sends audio over HTTP, no shared paths needed |
 
 ## Which one should I use?
 
 - **Mostly English content?** Start with **gpu-english**. It locks Whisper to English so it can't hallucinate random languages (German, Chinese, etc.) during quiet sections.
+- **Want fewer hallucinations?** Try **gpu-parakeet**. NVIDIA Parakeet-TDT-0.6B-V3 is a fast English-only model that rarely hallucinates. Requires building the image with `--build-arg ASR_ENGINE=parakeet`.
 - **Anime / foreign films / multi-language?** Use **gpu-multilingual**. Whisper detects the language automatically and `transcribe_and_translate` handles the rest.
 - **No NVIDIA GPU?** Use **cpu**. Expect slower transcription (~2-4x realtime with the `medium` model).
 - **Using Bazarr?** Use **bazarr**. Bazarr controls the language and task per request. Disable media server webhooks to avoid duplicates.

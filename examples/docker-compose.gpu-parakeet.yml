@@ -1,0 +1,66 @@
+# =============================================================================
+# Subgen — GPU + NVIDIA Parakeet (NeMo ASR Backend)
+# =============================================================================
+# Best for: English transcription with NVIDIA's Parakeet-TDT model.
+# Parakeet-TDT-0.6B-V3 is a fast, accurate English ASR model that uses
+# Token-and-Duration Transducer (TDT) architecture. It provides excellent
+# word-level timestamps and is less prone to hallucination than Whisper.
+#
+# NOTE: English only. For multilingual content, use the Whisper examples.
+#
+# Build the image with NeMo support first:
+#   docker compose -f docker-compose.gpu-parakeet.yml build
+# Then start:
+#   docker compose -f docker-compose.gpu-parakeet.yml up -d
+# =============================================================================
+
+services:
+  subgen:
+    container_name: subgen
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        ASR_ENGINE: parakeet
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/subgen/models:rw       # persist downloaded models
+      - ./cache:/cache:rw                # persist NeMo/HuggingFace model downloads (~2.4GB)
+      - /path/to/media:/media:rw         # match your media server paths
+    environment:
+      # --- GPU ---
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      # --- ASR Engine ---
+      ASR_ENGINE: parakeet
+      PARAKEET_MODEL: nvidia/parakeet-tdt-0.6b-v3
+      TRANSCRIBE_DEVICE: cuda
+
+      # --- Transcription Mode ---
+      # Parakeet is English-only. For non-English audio, argostranslate
+      # can still translate the result if you use transcribe_and_translate.
+      TRANSCRIBE_OR_TRANSLATE: transcribe
+      FORCE_DETECTED_LANGUAGE_TO: en
+
+      # --- Subtitle Output ---
+      SUBTITLE_LANGUAGE_NAME: en
+      SUBTITLE_LANGUAGE_NAMING_TYPE: ISO_639_1
+      CUSTOM_REGROUP: default
+
+      # --- Resource Management ---
+      CLEAR_VRAM_ON_COMPLETE: "true"     # free GPU memory when idle
+      MODEL_CLEANUP_DELAY: 60            # seconds to wait before unloading model
+
+      # --- Server ---
+      WEBHOOK_PORT: 9000
+      DEBUG: "false"

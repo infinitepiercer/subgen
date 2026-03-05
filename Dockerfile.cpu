@@ -1,16 +1,19 @@
 # === Stage 1: Build dependencies ===
 FROM python:3.11-slim-bullseye AS builder
 
+# Build arg: set to "parakeet" to include NeMo for the Parakeet ASR backend.
+ARG ASR_ENGINE=whisper
+
 WORKDIR /build
 
 # Build tools (rarely changes)
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg git tzdata build-essential python3-dev || \
+    ffmpeg git tzdata build-essential python3-dev libsndfile1-dev || \
     (apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
-    ffmpeg git tzdata build-essential python3-dev) && \
+    ffmpeg git tzdata build-essential python3-dev libsndfile1-dev) && \
     rm -rf /var/lib/apt/lists/*
 
 # PyTorch (large, rarely changes)
@@ -22,18 +25,27 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --prefix=/install \
     -r /tmp/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
+# Conditional NeMo installation for Parakeet backend
+COPY requirements-parakeet.txt /tmp/requirements-parakeet.txt
+RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
+        pip install --no-cache-dir --prefix=/install \
+        -r /tmp/requirements-parakeet.txt --extra-index-url https://download.pytorch.org/whl/cpu ; \
+    fi
+
 # === Stage 2: Minimal runtime image ===
 FROM python:3.11-slim-bullseye AS runtime
+
+ARG ASR_ENGINE=whisper
 
 WORKDIR /subgen
 
 # Runtime system packages (rarely changes)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg curl gosu tzdata || \
+    ffmpeg curl gosu tzdata libsndfile1 || \
     (apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
-    ffmpeg curl gosu tzdata) && \
+    ffmpeg curl gosu tzdata libsndfile1) && \
     rm -rf /var/lib/apt/lists/*
 
 # Python packages from builder (only re-copied when deps change)
@@ -47,7 +59,9 @@ COPY subgen/ /subgen/subgen/
 # Cache directory for HuggingFace/Matplotlib
 RUN mkdir -p /cache && chmod 777 /cache
 
-ENV XDG_CACHE_HOME=/cache \
+# Expose ASR_ENGINE at runtime so the application can detect the backend
+ENV ASR_ENGINE=${ASR_ENGINE} \
+    XDG_CACHE_HOME=/cache \
     HF_HOME=/cache/huggingface \
     MPLCONFIGDIR=/cache/matplotlib \
     WESPEAKER_HOME=/cache/wespeaker \

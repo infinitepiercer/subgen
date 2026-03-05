@@ -1,13 +1,17 @@
 FROM nvidia/cuda:12.3.2-base-ubuntu22.04
 
+# Build arg: set to "parakeet" to include NeMo for the Parakeet ASR backend.
+# Default "whisper" keeps the image lean (no NeMo overhead).
+ARG ASR_ENGINE=whisper
+
 # Layer 1: System packages (~200MB, rarely changes)
 ENV DEBIAN_FRONTEND=noninteractive
 RUN (apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg python3 python3-pip python3-dev build-essential curl gosu tzdata git || \
+    ffmpeg python3 python3-pip python3-dev build-essential curl gosu tzdata git libsndfile1 || \
     (apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
-    ffmpeg python3 python3-pip python3-dev build-essential curl gosu tzdata git)) && \
+    ffmpeg python3 python3-pip python3-dev build-essential curl gosu tzdata git libsndfile1)) && \
     rm -rf /var/lib/apt/lists/*
 
 # Layer 2: PyTorch (~2.5GB, only changes on torch version bumps)
@@ -19,6 +23,13 @@ COPY requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install -U --no-cache-dir -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
+# Layer 3b: Conditional NeMo installation for Parakeet backend
+COPY requirements-parakeet.txt /tmp/requirements-parakeet.txt
+RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
+        python3 -m pip install --no-cache-dir -r /tmp/requirements-parakeet.txt ; \
+    fi && \
+    rm /tmp/requirements-parakeet.txt
+
 WORKDIR /subgen
 
 # Layer 4: Source code (tiny, changes on every push)
@@ -29,7 +40,9 @@ COPY subgen/ /subgen/subgen/
 # Cache directory for HuggingFace/Matplotlib
 RUN mkdir -p /cache && chmod 777 /cache
 
-ENV XDG_CACHE_HOME=/cache \
+# Expose ASR_ENGINE at runtime so the application can detect the backend
+ENV ASR_ENGINE=${ASR_ENGINE} \
+    XDG_CACHE_HOME=/cache \
     HF_HOME=/cache/huggingface \
     MPLCONFIGDIR=/cache/matplotlib \
     WESPEAKER_HOME=/cache/wespeaker \

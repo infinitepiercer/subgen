@@ -5,7 +5,9 @@ import logging
 import threading
 
 from subgen.config import (
+    asr_engine,
     concurrent_transcriptions,
+    parakeet_model_name,
     whisper_model,
     transcribe_device,
     compute_type,
@@ -17,7 +19,6 @@ from subgen.config import (
     enable_diarization,
 )
 from subgen.queue.deduplicated_queue import task_queue
-from subgen.models.whisper_model import delete_model
 from subgen.services.transcription import gen_subtitles, asr_task_worker
 from subgen.services.language_detection import detect_language_task, detect_language_from_upload
 from subgen.integrations.plex import refresh_plex_metadata
@@ -39,8 +40,9 @@ def transcription_worker():
             queue_count = len(task_queue.get_queued_tasks())
             logging.info(f"WORKER START : [{task_type.upper():<10}] {display_name:^40} | Jobs: {proc_count} processing, {queue_count} queued")
             min_dur_str = f"{min_subtitle_duration}s" if min_subtitle_duration > 0 else "off"
+            model_display = parakeet_model_name if asr_engine == 'parakeet' else whisper_model
             logging.info(
-                f"  Config: model={whisper_model}  device={transcribe_device}  compute={compute_type}  "
+                f"  Config: engine={asr_engine}  model={model_display}  device={transcribe_device}  compute={compute_type}  "
                 f"mode={task.get('transcribe_or_translate', transcribe_or_translate)}  "
                 f"regroup={custom_regroup}  min_dur={min_dur_str}  normalize={normalize_audio}  "
                 f"filter={filter_subtitles}  diarization={enable_diarization}"
@@ -89,7 +91,11 @@ def transcription_worker():
             if task:
                 task_queue.task_done()
                 task_queue.mark_done(task)
-                delete_model()
+                if asr_engine == 'parakeet':
+                    from subgen.models.parakeet_model import delete_model as _delete
+                else:
+                    from subgen.models.whisper_model import delete_model as _delete
+                _delete()
 
 
 def start_workers():
