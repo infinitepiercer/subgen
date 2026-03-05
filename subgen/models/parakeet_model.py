@@ -82,18 +82,11 @@ def start_model() -> None:
 
             model.eval()
 
-            # Use fp16 on CUDA to halve VRAM usage during inference.
-            # Controlled by COMPUTE_TYPE env var: "float16"/"auto" → fp16, "float32" → fp32.
-            use_fp16 = (
-                device == "cuda"
-                and torch.cuda.is_available()
-                and compute_type in ("auto", "float16", "int8_float16")
-            )
-            if use_fp16:
-                model = model.half()
-                logger.info("Parakeet model cast to fp16 (compute_type=%s)", compute_type)
-            else:
-                logger.info("Parakeet model using fp32 (compute_type=%s)", compute_type)
+            # fp16 is handled at inference time via torch.cuda.amp.autocast()
+            # in _transcribe_parakeet(). We do NOT call model.half() here because
+            # NeMo's RNNT decoder feeds float32 tensors internally, causing
+            # "mat1 and mat2 must have the same dtype" errors with half weights.
+            logger.info("Parakeet compute_type=%s (autocast applied at inference)", compute_type)
 
             # For longer audio, switch to local attention to avoid OOM.
             # This sets a window size of 64 for each of the 6 conformer layers.
