@@ -27,7 +27,8 @@ RUN python3 -m pip install -U --no-cache-dir -r /tmp/requirements.txt && \
 COPY requirements-parakeet.txt /tmp/requirements-parakeet.txt
 RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
         python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
-        python3 -m pip install --no-cache-dir -r /tmp/requirements-parakeet.txt ; \
+        python3 -m pip install --no-cache-dir -r /tmp/requirements-parakeet.txt && \
+        python3 -m pip install --no-cache-dir --force-reinstall --no-binary hdbscan hdbscan==0.8.37 ; \
     fi && \
     rm /tmp/requirements-parakeet.txt
 
