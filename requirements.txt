@@ -9,5 +9,6 @@ ffmpeg-python
 watchdog
 langdetect
 argostranslate
+openai-whisper
 wespeaker @ git+https://github.com/wenet-e2e/wespeaker.git
 s3prl
