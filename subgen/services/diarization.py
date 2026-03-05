@@ -158,16 +158,20 @@ def _split_multi_speaker_segments(result: object, diar_segments: List[DiarSegmen
             new_segments.append(segment)
             continue
 
-        # Build new pseudo-segments for each speaker group
+        # Build new segments for each speaker group
+        from stable_whisper.result import Segment as StableSegment  # type: ignore[import-not-found]
         for speaker_label, word_group in groups:
-            # Create a lightweight object that mimics a segment
-            sub_seg = _SubSegment(
-                start=getattr(word_group[0], "start", segment.start),
-                end=getattr(word_group[-1], "end", segment.end),
-                text=" ".join(getattr(w, "word", "").strip() for w in word_group),
-                words=word_group,
-                speaker=speaker_label,
-            )
+            word_dicts = [
+                {
+                    "word": getattr(w, "word", ""),
+                    "start": getattr(w, "start", segment.start),
+                    "end": getattr(w, "end", segment.end),
+                    "probability": getattr(w, "probability", None),
+                }
+                for w in word_group
+            ]
+            sub_seg = StableSegment(words=word_dicts, ignore_unused_args=True)
+            sub_seg.speaker = speaker_label
             new_segments.append(sub_seg)
 
         logger.debug(
@@ -179,26 +183,6 @@ def _split_multi_speaker_segments(result: object, diar_segments: List[DiarSegmen
         )
 
     result.segments = new_segments
-
-
-class _SubSegment:
-    """Minimal segment-like object used when splitting multi-speaker segments."""
-
-    __slots__ = ("start", "end", "text", "words", "speaker")
-
-    def __init__(
-        self,
-        start: float,
-        end: float,
-        text: str,
-        words: list,
-        speaker: str,
-    ) -> None:
-        self.start = start
-        self.end = end
-        self.text = text
-        self.words = words
-        self.speaker = speaker
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +198,6 @@ def add_speaker_labels(result: object, audio_data: Union[str, bytes, bytearray],
       2. Runs diarization on the audio.
       3. Assigns speaker labels to each segment (maximum overlap).
       4. Splits segments that span a speaker-change boundary at word boundaries.
-      5. Prepends ``[Speaker N]`` to each segment's text.
 
     Args:
         result: A ``stable_whisper`` transcription result whose ``.segments``
@@ -252,7 +235,7 @@ def add_speaker_labels(result: object, audio_data: Union[str, bytes, bytearray],
         _assign_speakers(result, diar_segments)
         _split_multi_speaker_segments(result, diar_segments)
 
-        # Count unique speakers (labels are kept internal, not shown in subtitle text)
+        # Count unique speakers
         unique_speakers: set = set()
         for segment in result.segments:
             speaker = getattr(segment, "speaker", "Unknown")
