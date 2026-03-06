@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 _LIBRISPEECH_LM_URL = (
     "https://www.openslr.org/resources/11/librispeech-lm-norm.txt.gz"
 )
-_DEFAULT_NGRAM_ORDER = 4
-_MAX_LINES = 5_000_000  # Cap input to keep lmplz memory usage reasonable
+_DEFAULT_NGRAM_ORDER = 3
+_MAX_LINES = 1_000_000  # Cap input to keep lmplz memory usage reasonable
 # NeMo encodes BPE token IDs as Unicode characters offset by this value.
 # This must match NeMo's internal DEFAULT_TOKEN_OFFSET in kenlm_utils.py.
 _TOKEN_OFFSET = 100
@@ -64,7 +64,8 @@ def _tokenize_and_build(
     # lmplz reads tokenized text from stdin, one sentence per line.
     # Each "word" is a Unicode-encoded BPE token.
     # --prune needs exactly ngram_order values (one threshold per n-gram level).
-    prune_values = ["0"] * min(ngram_order, 2) + ["1"] * max(ngram_order - 2, 0)
+    # Heavier pruning: keep all unigrams, prune bigrams <1, trigrams <2
+    prune_values = (["0"] + [str(i) for i in range(1, ngram_order)])[:ngram_order]
     lmplz_cmd = [
         "lmplz",
         "-o", str(ngram_order),
@@ -109,7 +110,10 @@ def _tokenize_and_build(
                 if lines_processed % 500_000 == 0:
                     logger.info("  Tokenized %d lines...", lines_processed)
     finally:
-        proc.stdin.close()
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass  # Pipe already dead (lmplz crashed)
 
     stdout, stderr = proc.communicate()
     if proc.returncode != 0:
