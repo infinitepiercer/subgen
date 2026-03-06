@@ -127,6 +127,8 @@ def start_model() -> None:
                     # when torch.cuda.empty_cache() is called between jobs
                     decoding_cfg.greedy.use_cuda_graph_decoder = False
                     decoding_cfg.greedy.allow_cuda_graphs = False
+                    decoding_cfg.greedy.max_symbols_per_step = 30
+                    decoding_cfg.greedy.max_symbols = 30
                     if arpa_path:
                         decoding_cfg.greedy.ngram_lm_model = arpa_path
                         decoding_cfg.greedy.ngram_lm_alpha = 0.2
