@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 _LIBRISPEECH_LM_URL = (
     "https://www.openslr.org/resources/11/librispeech-lm-norm.txt.gz"
 )
-_DEFAULT_NGRAM_ORDER = 6
+_DEFAULT_NGRAM_ORDER = 4
+_MAX_LINES = 5_000_000  # Cap input to keep lmplz memory usage reasonable
 # NeMo encodes BPE token IDs as Unicode characters offset by this value.
 # This must match NeMo's internal DEFAULT_TOKEN_OFFSET in kenlm_utils.py.
 _TOKEN_OFFSET = 100
@@ -62,11 +63,13 @@ def _tokenize_and_build(
 
     # lmplz reads tokenized text from stdin, one sentence per line.
     # Each "word" is a Unicode-encoded BPE token.
+    # --prune needs exactly ngram_order values (one threshold per n-gram level).
+    prune_values = ["0"] * min(ngram_order, 2) + ["1"] * max(ngram_order - 2, 0)
     lmplz_cmd = [
         "lmplz",
         "-o", str(ngram_order),
         "--arpa", arpa_path,
-        "--prune", "0", "0", "0", "1", "1", "2",
+        "--prune", *prune_values,
         "--discount_fallback",
     ]
 
@@ -81,6 +84,8 @@ def _tokenize_and_build(
     try:
         with gzip.open(text_gz_path, "rt", encoding="utf-8") as f:
             for line in f:
+                if lines_processed >= _MAX_LINES:
+                    break
                 line = line.strip().lower()
                 if not line:
                     continue
@@ -96,7 +101,10 @@ def _tokenize_and_build(
                 encoded_line = " ".join(
                     chr(tid + _TOKEN_OFFSET) for tid in token_ids
                 ) + "\n"
-                proc.stdin.write(encoded_line.encode("utf-8"))
+                try:
+                    proc.stdin.write(encoded_line.encode("utf-8"))
+                except BrokenPipeError:
+                    break
                 lines_processed += 1
                 if lines_processed % 500_000 == 0:
                     logger.info("  Tokenized %d lines...", lines_processed)
