@@ -32,6 +32,19 @@ RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
     fi && \
     rm /tmp/requirements-parakeet.txt
 
+# Layer 3c: KenLM n-gram tools for Parakeet LM fusion (improves word accuracy)
+RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
+        apt-get update && \
+        apt-get install -y --no-install-recommends cmake libboost-program-options-dev \
+            libboost-system-dev libboost-thread-dev zlib1g-dev libbz2-dev liblzma-dev && \
+        rm -rf /var/lib/apt/lists/* && \
+        git clone --depth 1 https://github.com/kpu/kenlm.git /tmp/kenlm && \
+        cd /tmp/kenlm && mkdir build && cd build && \
+        cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && \
+        cp bin/lmplz /usr/local/bin/ && \
+        rm -rf /tmp/kenlm ; \
+    fi
+
 WORKDIR /subgen
 
 # Layer 4: Source code (tiny, changes on every push)

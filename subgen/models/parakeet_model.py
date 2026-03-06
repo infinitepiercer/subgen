@@ -103,6 +103,36 @@ def start_model() -> None:
                     "Could not switch attention model (non-fatal): %s", exc
                 )
 
+            # Build/load BPE n-gram LM for greedy decoding with NGPU-LM fusion.
+            # Improves word accuracy for homophones, accents, and slurred speech
+            # with only ~7% speed overhead (vs 11x for beam search).
+            # Also preserves word-level timestamps (beam search does not).
+            try:
+                from subgen.models.lm_utils import ensure_ngram_lm
+
+                lm_cache = model_location or "/cache"
+                arpa_path = ensure_ngram_lm(model.tokenizer, lm_cache)
+
+                if arpa_path:
+                    import copy
+                    from omegaconf import open_dict
+
+                    decoding_cfg = copy.deepcopy(model.cfg.decoding)
+                    with open_dict(decoding_cfg):
+                        decoding_cfg.strategy = "greedy_batch"
+                        decoding_cfg.greedy = decoding_cfg.get("greedy", {})
+                        decoding_cfg.greedy.ngram_lm_model = arpa_path
+                        decoding_cfg.greedy.ngram_lm_alpha = 0.2
+                    model.change_decoding_strategy(decoding_cfg)
+                    logger.info(
+                        "NGPU-LM enabled: greedy decoding with n-gram LM (alpha=0.2)"
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Could not enable n-gram LM (falling back to plain greedy): %s",
+                    exc,
+                )
+
             logger.info("Parakeet model loaded successfully")
 
 
