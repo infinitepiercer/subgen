@@ -81,7 +81,7 @@ def _tokenize_and_build(
     try:
         with gzip.open(text_gz_path, "rt", encoding="utf-8") as f:
             for line in f:
-                line = line.strip()
+                line = line.strip().lower()
                 if not line:
                     continue
                 # Tokenize to BPE token IDs, then encode as Unicode
