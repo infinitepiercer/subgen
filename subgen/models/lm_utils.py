@@ -22,7 +22,7 @@ _LIBRISPEECH_LM_URL = (
     "https://www.openslr.org/resources/11/librispeech-lm-norm.txt.gz"
 )
 _DEFAULT_NGRAM_ORDER = 3
-_MAX_LINES = 1_000_000  # Cap input to keep lmplz memory usage reasonable
+_MAX_LINES = 500_000  # Cap input to keep lmplz memory usage reasonable
 # NeMo encodes BPE token IDs as Unicode characters offset by this value.
 # This must match NeMo's internal DEFAULT_TOKEN_OFFSET in kenlm_utils.py.
 _TOKEN_OFFSET = 100
@@ -105,7 +105,7 @@ def _tokenize_and_build(
                 ) + "\n"
                 try:
                     proc.stdin.write(encoded_line.encode("utf-8"))
-                except BrokenPipeError:
+                except (BrokenPipeError, OSError, ValueError):
                     break
                 lines_processed += 1
                 if lines_processed % 500_000 == 0:
