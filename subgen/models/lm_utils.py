@@ -1,8 +1,9 @@
 """Build a BPE-tokenized n-gram language model for Parakeet NGPU-LM fusion.
 
-On first call, downloads the LibriSpeech normalized LM training text,
-tokenizes it with the Parakeet model's BPE tokenizer, and builds a
-KenLM n-gram model.  The result is cached so subsequent loads are instant.
+On first call, downloads the OpenSubtitles English monolingual text
+(movie/TV dialogue), tokenizes it with the Parakeet model's BPE tokenizer,
+and builds a KenLM n-gram model.  The result is cached so subsequent loads
+are instant.
 
 Requires ``lmplz`` from KenLM to be on ``$PATH``
 (installed via the Dockerfile).
@@ -11,6 +12,7 @@ Requires ``lmplz`` from KenLM to be on ``$PATH``
 import gzip
 import logging
 import os
+import re
 import shutil
 import subprocess
 import urllib.request
@@ -18,14 +20,38 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_LIBRISPEECH_LM_URL = (
-    "https://www.openslr.org/resources/11/librispeech-lm-norm.txt.gz"
+# OpenSubtitles v2018 English monolingual text from OPUS.
+# Contains hundreds of millions of movie/TV dialogue lines — far better
+# suited for subtitle ASR than the LibriSpeech audiobook text.
+_OPENSUBTITLES_LM_URL = (
+    "https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2018/mono/en.txt.gz"
 )
 _DEFAULT_NGRAM_ORDER = 3
-_MAX_LINES = 500_000  # Cap input to keep lmplz memory usage reasonable
+# Subtitle lines are short (~5-15 words) so we use more lines than we
+# would for audiobook text to get equivalent n-gram coverage.
+_MAX_LINES = 2_000_000
 # NeMo encodes BPE token IDs as Unicode characters offset by this value.
 # This must match NeMo's internal DEFAULT_TOKEN_OFFSET in kenlm_utils.py.
 _TOKEN_OFFSET = 100
+
+# Cleaning patterns for raw subtitle text
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_BRACKET_RE = re.compile(r"\[[^\]]*\]")
+_PAREN_ANNOTATION_RE = re.compile(r"\([^)]*\)")
+_MUSIC_RE = re.compile(r"[♪♬♩♫]+")
+_SPEAKER_DASH_RE = re.compile(r"^-+\s*")
+_MULTI_SPACE_RE = re.compile(r"\s{2,}")
+
+
+def _clean_subtitle_line(line: str) -> str:
+    """Strip HTML tags, hearing-impaired annotations, and music markers."""
+    line = _HTML_TAG_RE.sub("", line)
+    line = _BRACKET_RE.sub("", line)
+    line = _PAREN_ANNOTATION_RE.sub("", line)
+    line = _MUSIC_RE.sub("", line)
+    line = _SPEAKER_DASH_RE.sub("", line)
+    line = _MULTI_SPACE_RE.sub(" ", line)
+    return line.strip()
 
 
 def _kenlm_available() -> bool:
@@ -36,7 +62,7 @@ def _kenlm_available() -> bool:
 def _download_with_progress(url: str, dest: str) -> None:
     """Download a file with logging progress."""
     logger.info("Downloading LM training text from %s", url)
-    logger.info("This is a one-time download (~800 MB). The built n-gram will be cached.")
+    logger.info("This is a one-time download. The built n-gram will be cached.")
 
     def _report(block_num: int, block_size: int, total_size: int) -> None:
         downloaded = block_num * block_size
@@ -88,8 +114,8 @@ def _tokenize_and_build(
             for line in f:
                 if lines_processed >= _MAX_LINES:
                     break
-                line = line.strip().lower()
-                if not line:
+                line = _clean_subtitle_line(line).lower()
+                if not line or len(line) < 3:
                     continue
                 # Tokenize to BPE token IDs, then encode as Unicode
                 # characters (chr(id + _TOKEN_OFFSET)) to match NeMo's
@@ -147,7 +173,7 @@ def ensure_ngram_lm(
         )
         return None
 
-    arpa_path = os.path.join(cache_dir, f"parakeet_bpe_{ngram_order}gram.arpa")
+    arpa_path = os.path.join(cache_dir, f"parakeet_opensubs_{ngram_order}gram.arpa")
 
     if os.path.exists(arpa_path):
         logger.info("Using cached n-gram LM: %s", arpa_path)
@@ -155,11 +181,17 @@ def ensure_ngram_lm(
 
     os.makedirs(cache_dir, exist_ok=True)
 
-    # Download LibriSpeech text if not cached
-    text_gz_path = os.path.join(cache_dir, "librispeech-lm-norm.txt.gz")
+    # Remove old LibriSpeech-based ARPA if present (superseded by OpenSubtitles)
+    old_arpa = os.path.join(cache_dir, f"parakeet_bpe_{ngram_order}gram.arpa")
+    if os.path.exists(old_arpa):
+        logger.info("Removing old LibriSpeech-based LM: %s", old_arpa)
+        os.unlink(old_arpa)
+
+    # Download OpenSubtitles English text if not cached
+    text_gz_path = os.path.join(cache_dir, "opensubtitles-en.txt.gz")
     if not os.path.exists(text_gz_path):
         try:
-            _download_with_progress(_LIBRISPEECH_LM_URL, text_gz_path)
+            _download_with_progress(_OPENSUBTITLES_LM_URL, text_gz_path)
         except Exception as exc:
             logger.error("Failed to download LM training text: %s", exc)
             return None

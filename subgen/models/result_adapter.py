@@ -19,8 +19,41 @@ logger = logging.getLogger(__name__)
 # Punctuation characters that mark the end of a sentence.
 _SENTENCE_ENDERS: re.Pattern[str] = re.compile(r"[.!?]$")
 
+# Comma — used as a soft split point when the segment is already long enough.
+_CLAUSE_BREAK: re.Pattern[str] = re.compile(r",$")
+
 # Maximum segment duration in seconds before forcing a split.
-_MAX_SEGMENT_DURATION: float = 10.0
+_MAX_SEGMENT_DURATION: float = 8.0
+
+# Minimum segment duration before allowing a comma-based split.
+_MIN_SEGMENT_FOR_CLAUSE_SPLIT: float = 3.0
+
+# Gap (seconds) between the end of one word and the start of the next
+# that triggers a segment break (breath / speaker change).
+_GAP_SPLIT_THRESHOLD: float = 0.7
+
+
+def _flush_segment(
+    segments: List[Dict[str, Any]],
+    current_words: List[Dict[str, Any]],
+    segment_start: float,
+) -> None:
+    """Append the accumulated words as a new segment."""
+    if not current_words:
+        return
+    segment_text = "".join(w["word"] for w in current_words)
+    segment_end = current_words[-1]["end"]
+    segments.append(
+        {
+            "start": segment_start,
+            "end": segment_end,
+            "text": segment_text,
+            "words": current_words,
+            "no_speech_prob": 0.0,
+            "avg_logprob": 0.0,
+            "compression_ratio": 1.0,
+        }
+    )
 
 
 def _group_words_into_segments(
@@ -28,21 +61,14 @@ def _group_words_into_segments(
 ) -> List[Dict[str, Any]]:
     """Group Parakeet word timestamps into subtitle segments.
 
-    Splits on sentence-ending punctuation (``.``, ``!``, ``?``) or when a
-    segment exceeds ``_MAX_SEGMENT_DURATION`` seconds.
+    Splits on:
+      - Sentence-ending punctuation (``.``, ``!``, ``?``)
+      - Commas when the segment is already >= ``_MIN_SEGMENT_FOR_CLAUSE_SPLIT``
+      - Gaps between words >= ``_GAP_SPLIT_THRESHOLD`` (breath / speaker change)
+      - Maximum duration ``_MAX_SEGMENT_DURATION``
 
     Each returned segment dict is ready for ``stable_whisper.WhisperResult``
-    consumption::
-
-        {
-            "start": float,
-            "end": float,
-            "text": str,
-            "words": [{"word": str, "start": float, "end": float, "probability": float}, ...],
-            "no_speech_prob": 0.0,
-            "avg_logprob": 0.0,
-            "compression_ratio": 1.0,
-        }
+    consumption.
     """
     if not word_timestamps:
         return []
@@ -50,11 +76,20 @@ def _group_words_into_segments(
     segments: List[Dict[str, Any]] = []
     current_words: List[Dict[str, Any]] = []
     segment_start: float = word_timestamps[0].get("start", 0.0)
+    prev_word_end: float = segment_start
 
     for raw_word in word_timestamps:
         word_text: str = raw_word.get("word", "")
         word_start: float = float(raw_word.get("start", 0.0))
         word_end: float = float(raw_word.get("end", 0.0))
+
+        # Detect a gap (pause / breath / speaker change) BEFORE adding the word.
+        # If there's a significant gap, flush the current segment first.
+        gap = word_start - prev_word_end
+        if current_words and gap >= _GAP_SPLIT_THRESHOLD:
+            _flush_segment(segments, current_words, segment_start)
+            current_words = []
+            segment_start = word_start
 
         # Ensure the word text has a leading space for proper concatenation
         # (stable_whisper joins words via ''.join(w.word for w in words)).
@@ -69,44 +104,24 @@ def _group_words_into_segments(
                 "probability": 1.0,
             }
         )
+        prev_word_end = word_end
 
         # Decide whether to close the current segment.
         duration = word_end - segment_start
         ends_sentence = _SENTENCE_ENDERS.search(word_text.rstrip())
         exceeds_duration = duration >= _MAX_SEGMENT_DURATION
+        clause_break = (
+            _CLAUSE_BREAK.search(word_text.rstrip())
+            and duration >= _MIN_SEGMENT_FOR_CLAUSE_SPLIT
+        )
 
-        if ends_sentence or exceeds_duration:
-            segment_text = "".join(w["word"] for w in current_words)
-            segment_end = current_words[-1]["end"]
-            segments.append(
-                {
-                    "start": segment_start,
-                    "end": segment_end,
-                    "text": segment_text,
-                    "words": current_words,
-                    "no_speech_prob": 0.0,
-                    "avg_logprob": 0.0,
-                    "compression_ratio": 1.0,
-                }
-            )
+        if ends_sentence or exceeds_duration or clause_break:
+            _flush_segment(segments, current_words, segment_start)
             current_words = []
             segment_start = word_end  # next segment starts after this word
 
     # Flush any remaining words into a final segment.
-    if current_words:
-        segment_text = "".join(w["word"] for w in current_words)
-        segment_end = current_words[-1]["end"]
-        segments.append(
-            {
-                "start": segment_start,
-                "end": segment_end,
-                "text": segment_text,
-                "words": current_words,
-                "no_speech_prob": 0.0,
-                "avg_logprob": 0.0,
-                "compression_ratio": 1.0,
-            }
-        )
+    _flush_segment(segments, current_words, segment_start)
 
     return segments
 
