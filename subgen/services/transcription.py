@@ -115,6 +115,7 @@ def _delete_model() -> None:
 
 
 _PARAKEET_CHUNK_SECONDS: int = 600  # 10 minutes per chunk
+_PARAKEET_CHUNK_OVERLAP: int = 10   # seconds of overlap between chunks
 
 
 def _get_audio_duration(audio_path: str) -> float:
@@ -131,16 +132,23 @@ def _get_audio_duration(audio_path: str) -> float:
         return 0.0
 
 
-def _split_audio_chunks(audio_path: str, chunk_seconds: int) -> list[str]:
-    """Split an audio file into chunks using ffmpeg. Returns list of temp file paths."""
+def _split_audio_chunks(
+    audio_path: str, chunk_seconds: int, overlap: int = 0,
+) -> list[tuple[str, float]]:
+    """Split an audio file into overlapping chunks using ffmpeg.
+
+    Returns list of (temp_file_path, actual_start_offset) tuples.
+    The overlap prevents words at chunk boundaries from being lost.
+    """
     import subprocess
     import tempfile
 
     duration = _get_audio_duration(audio_path)
     if duration <= 0 or duration <= chunk_seconds:
-        return [audio_path]
+        return [(audio_path, 0.0)]
 
-    chunk_paths: list[str] = []
+    step = chunk_seconds - overlap
+    chunks: list[tuple[str, float]] = []
     offset = 0.0
     while offset < duration:
         chunk_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
@@ -151,10 +159,10 @@ def _split_audio_chunks(audio_path: str, chunk_seconds: int) -> list[str]:
              "-c:a", "pcm_s16le", chunk_file.name],
             capture_output=True, timeout=120,
         )
-        chunk_paths.append(chunk_file.name)
-        offset += chunk_seconds
+        chunks.append((chunk_file.name, offset))
+        offset += step
 
-    return chunk_paths
+    return chunks
 
 
 def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object:
@@ -198,17 +206,21 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
     else:
         raise TypeError(f"Unsupported audio data type: {type(audio_data)}")
 
-    chunk_paths: list[str] = []
+    chunks: list[tuple[str, float]] = []
     try:
-        chunk_paths = _split_audio_chunks(audio_path, _PARAKEET_CHUNK_SECONDS)
-        is_chunked = len(chunk_paths) > 1 or chunk_paths[0] != audio_path
+        chunks = _split_audio_chunks(
+            audio_path, _PARAKEET_CHUNK_SECONDS, _PARAKEET_CHUNK_OVERLAP,
+        )
+        is_chunked = len(chunks) > 1 or chunks[0][0] != audio_path
 
         if is_chunked:
-            logger.info("Audio split into %d chunks of %ds each", len(chunk_paths), _PARAKEET_CHUNK_SECONDS)
+            logger.info(
+                "Audio split into %d chunks of %ds each (%ds overlap)",
+                len(chunks), _PARAKEET_CHUNK_SECONDS, _PARAKEET_CHUNK_OVERLAP,
+            )
 
         all_word_timestamps: list[dict] = []
         full_text_parts: list[str] = []
-        time_offset = 0.0
 
         use_fp16 = (
             transcribe_device.lower() == "cuda"
@@ -216,9 +228,9 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
             and compute_type in ("auto", "float16", "int8_float16")
         )
 
-        for i, chunk_path in enumerate(chunk_paths):
+        for i, (chunk_path, actual_offset) in enumerate(chunks):
             if is_chunked:
-                logger.info("Transcribing chunk %d/%d (offset %.1fs)", i + 1, len(chunk_paths), time_offset)
+                logger.info("Transcribing chunk %d/%d (offset %.1fs)", i + 1, len(chunks), actual_offset)
 
             with torch.cuda.amp.autocast(enabled=use_fp16):
                 output = parakeet_model.transcribe([chunk_path], timestamps=True)
@@ -228,15 +240,22 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
             timestamp_data = getattr(chunk_output, "timestamp", {}) or {}
             word_ts = timestamp_data.get("word", [])
 
-            # Offset timestamps for chunked audio
-            if time_offset > 0 and word_ts:
+            # For chunks after the first, skip words in the overlap region
+            # (they were already captured more accurately by the previous chunk).
+            if i > 0 and word_ts and _PARAKEET_CHUNK_OVERLAP > 0:
+                word_ts = [
+                    w for w in word_ts
+                    if float(w.get("start", 0.0)) >= _PARAKEET_CHUNK_OVERLAP
+                ]
+
+            # Offset timestamps by the chunk's actual start position
+            if actual_offset > 0 and word_ts:
                 for w in word_ts:
-                    w["start"] = float(w.get("start", 0.0)) + time_offset
-                    w["end"] = float(w.get("end", 0.0)) + time_offset
+                    w["start"] = float(w.get("start", 0.0)) + actual_offset
+                    w["end"] = float(w.get("end", 0.0)) + actual_offset
 
             all_word_timestamps.extend(word_ts)
             full_text_parts.append(chunk_text)
-            time_offset += _PARAKEET_CHUNK_SECONDS
 
         # Build a combined result using the adapter
         if is_chunked and all_word_timestamps:
@@ -254,7 +273,7 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
         return result
     finally:
         # Clean up chunk temp files (but not the original if it wasn't a temp)
-        for cp in chunk_paths:
+        for cp, _ in chunks:
             if cp != audio_path and os.path.exists(cp):
                 os.unlink(cp)
         if cleanup_path and os.path.exists(cleanup_path):

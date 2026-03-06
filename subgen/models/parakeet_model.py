@@ -18,6 +18,7 @@ from subgen.config import (
     compute_type,
     parakeet_model_name as _parakeet_model_name,
     model_location,
+    ngram_lm_alpha as _ngram_lm_alpha,
     transcribe_device,
     clear_vram_on_complete,
     model_cleanup_delay,
@@ -131,12 +132,13 @@ def start_model() -> None:
                     decoding_cfg.greedy.max_symbols = 30
                     if arpa_path:
                         decoding_cfg.greedy.ngram_lm_model = arpa_path
-                        decoding_cfg.greedy.ngram_lm_alpha = 0.2
+                        decoding_cfg.greedy.ngram_lm_alpha = _ngram_lm_alpha
                 model.change_decoding_strategy(decoding_cfg)
                 if arpa_path:
                     logger.info(
                         "NGPU-LM enabled: greedy decoding with n-gram LM "
-                        "(alpha=0.2), CUDA graphs disabled"
+                        "(alpha=%.2f), CUDA graphs disabled",
+                        _ngram_lm_alpha,
                     )
                 else:
                     logger.info("Greedy decoding configured with CUDA graphs disabled")
