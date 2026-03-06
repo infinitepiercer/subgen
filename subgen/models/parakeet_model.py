@@ -89,12 +89,15 @@ def start_model() -> None:
             logger.info("Parakeet compute_type=%s (autocast applied at inference)", compute_type)
 
             # For longer audio, switch to local attention to avoid OOM.
-            # This sets a window size of 64 for each of the 6 conformer layers.
+            # Window size 128 balances accuracy and VRAM — supports up to ~3h.
+            # change_subsampling_conv_chunking_factor(1) auto-selects optimal
+            # chunking for the subsampling convolution layers.
             try:
                 model.change_attention_model(
-                    "rel_pos_local_attn", [64, 64, 64, 64, 64, 64]
+                    "rel_pos_local_attn", [128, 128]
                 )
-                logger.debug("Switched Parakeet attention to rel_pos_local_attn")
+                model.change_subsampling_conv_chunking_factor(1)
+                logger.debug("Switched Parakeet to local attention (window=128) with conv chunking")
             except Exception as exc:
                 logger.warning(
                     "Could not switch attention model (non-fatal): %s", exc
