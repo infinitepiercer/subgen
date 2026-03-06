@@ -40,7 +40,7 @@ RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
         rm -rf /var/lib/apt/lists/* && \
         git clone --depth 1 https://github.com/kpu/kenlm.git /tmp/kenlm && \
         cd /tmp/kenlm && mkdir build && cd build && \
-        cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && \
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF && make -j$(nproc) && \
         cp bin/lmplz /usr/local/bin/ && \
         rm -rf /tmp/kenlm ; \
     fi
