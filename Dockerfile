@@ -36,7 +36,7 @@ RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
 RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
         apt-get update && \
         apt-get install -y --no-install-recommends cmake libboost-program-options-dev \
-            libboost-system-dev libboost-thread-dev zlib1g-dev libbz2-dev liblzma-dev && \
+            libboost-system-dev libboost-thread-dev libboost-test-dev zlib1g-dev libbz2-dev liblzma-dev && \
         rm -rf /var/lib/apt/lists/* && \
         git clone --depth 1 https://github.com/kpu/kenlm.git /tmp/kenlm && \
         cd /tmp/kenlm && mkdir build && cd build && \
