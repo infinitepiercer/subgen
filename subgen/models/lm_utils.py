@@ -116,6 +116,9 @@ def _tokenize_and_build(
         except (OSError, ValueError):
             pass  # Pipe already dead (lmplz crashed)
 
+    # stdin is already closed above; set to None so communicate() won't
+    # try to flush/close it again (which raises "flush of closed file").
+    proc.stdin = None
     stdout, stderr = proc.communicate()
     if proc.returncode != 0:
         err_msg = stderr.decode("utf-8", errors="replace")
