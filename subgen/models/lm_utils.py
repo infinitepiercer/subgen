@@ -72,6 +72,7 @@ def _tokenize_and_build(
         "--arpa", arpa_path,
         "--prune", *prune_values,
         "--discount_fallback",
+        "-S", "1G",
     ]
 
     proc = subprocess.Popen(
@@ -112,7 +113,7 @@ def _tokenize_and_build(
     finally:
         try:
             proc.stdin.close()
-        except OSError:
+        except (OSError, ValueError):
             pass  # Pipe already dead (lmplz crashed)
 
     stdout, stderr = proc.communicate()
