@@ -26,10 +26,11 @@ logger = logging.getLogger(__name__)
 _OPENSUBTITLES_LM_URL = (
     "https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2018/mono/en.txt.gz"
 )
-_DEFAULT_NGRAM_ORDER = 3
+_DEFAULT_NGRAM_ORDER = 5
 # Subtitle lines are short (~5-15 words) so we use more lines than we
 # would for audiobook text to get equivalent n-gram coverage.
-_MAX_LINES = 1_000_000
+# With noise filters in place, 2M lines is safe and gives better coverage.
+_MAX_LINES = 2_000_000
 # NeMo encodes BPE token IDs as Unicode characters offset by this value.
 # This must match NeMo's internal DEFAULT_TOKEN_OFFSET in kenlm_utils.py.
 _TOKEN_OFFSET = 100
@@ -98,7 +99,7 @@ def _tokenize_and_build(
         "--arpa", arpa_path,
         "--prune", *prune_values,
         "--discount_fallback",
-        "-S", "1G",
+        "-S", "2G",
     ]
 
     proc = subprocess.Popen(

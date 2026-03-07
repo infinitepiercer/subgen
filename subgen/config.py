@@ -44,7 +44,6 @@ jellyfinserver: str = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER',
 asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper' or 'parakeet'
 parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-0.6b-v3')
 ngram_lm_alpha: float = float(os.getenv('NGRAM_LM_ALPHA', '0.3'))
-parakeet_beam_size: int = int(os.getenv('PARAKEET_BEAM_SIZE', '5'))
 
 # ---------------------------------------------------------------------------
 # Whisper Configuration
