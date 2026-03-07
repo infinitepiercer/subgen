@@ -42,7 +42,7 @@ jellyfinserver: str = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER',
 # ASR Backend Selection
 # ---------------------------------------------------------------------------
 asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper' or 'parakeet'
-parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-0.6b-v3')
+parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-1.1b')
 ngram_lm_alpha: float = float(os.getenv('NGRAM_LM_ALPHA', '0.3'))
 
 # ---------------------------------------------------------------------------
