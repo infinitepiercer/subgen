@@ -44,6 +44,7 @@ jellyfinserver: str = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER',
 asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper' or 'parakeet'
 parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-0.6b-v3')
 ngram_lm_alpha: float = float(os.getenv('NGRAM_LM_ALPHA', '0.3'))
+parakeet_beam_size: int = int(os.getenv('PARAKEET_BEAM_SIZE', '5'))
 
 # ---------------------------------------------------------------------------
 # Whisper Configuration
@@ -172,11 +173,17 @@ show_in_subname_model: bool = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_MODEL',
 # Advanced Configuration - SUBGEN_KWARGS
 # ---------------------------------------------------------------------------
 # BUG FIX: also catch SyntaxError and TypeError (bare except ValueError was insufficient)
+_default_kwargs: dict = {
+    'beam_size': 5,
+    'condition_on_previous_text': True,
+}
 try:
-    kwargs: dict = ast.literal_eval(os.getenv('SUBGEN_KWARGS', '{}') or '{}')
+    _user_kwargs: dict = ast.literal_eval(os.getenv('SUBGEN_KWARGS', '{}') or '{}')
 except (ValueError, SyntaxError, TypeError):
-    kwargs = {}
+    _user_kwargs = {}
     logging.info("kwargs (SUBGEN_KWARGS) is an invalid dictionary, defaulting to empty '{}'")
+# Merge: user overrides take precedence over defaults
+kwargs: dict = {**_default_kwargs, **_user_kwargs}
 
 # ---------------------------------------------------------------------------
 # Device normalization

@@ -59,6 +59,28 @@ logger = logging.getLogger(__name__)
 
 _UNEXPECTED_KWARG_RE = re.compile(r"got an unexpected keyword argument '(\w+)'")
 
+# Regex for capitalizing first letter after sentence-ending punctuation
+_SENTENCE_START_RE = re.compile(r'(?:^|[.!?]\s+)([a-z])')
+
+
+def _capitalize_segments(result) -> None:
+    """Capitalize the first letter of each segment and after sentence boundaries.
+
+    Whisper sometimes outputs all-lowercase text depending on the model and
+    language.  This post-processes the result in-place so subtitles have
+    proper sentence capitalization.
+    """
+    for seg in result.segments:
+        if not seg.text:
+            continue
+        text = seg.text.strip()
+        # Capitalize first character of the segment
+        if text and text[0].islower():
+            text = text[0].upper() + text[1:]
+        # Capitalize after sentence-ending punctuation
+        text = _SENTENCE_START_RE.sub(lambda m: m.group(0)[:-1] + m.group(1).upper(), text)
+        seg.text = text
+
 
 def _transcribe_with_kwarg_filter(model, **kwargs):
     """Call model.transcribe(), automatically stripping unsupported kwargs.
@@ -676,6 +698,7 @@ def gen_subtitles(
         appendLine(result)
         if filter_subtitles:
             filter_segments(result)
+        _capitalize_segments(result)
         apply_pad(result, start_pad, end_pad)
         enforce_min_subtitle_duration(result, min_subtitle_duration)
 
@@ -825,6 +848,7 @@ def asr_task_worker(task_data: dict) -> None:
         appendLine(result)
         if filter_subtitles:
             filter_segments(result)
+        _capitalize_segments(result)
         apply_pad(result, start_pad, end_pad)
         enforce_min_subtitle_duration(result, min_subtitle_duration)
 

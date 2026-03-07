@@ -19,6 +19,7 @@ from subgen.config import (
     parakeet_model_name as _parakeet_model_name,
     model_location,
     ngram_lm_alpha as _ngram_lm_alpha,
+    parakeet_beam_size as _beam_size,
     transcribe_device,
     clear_vram_on_complete,
     model_cleanup_delay,
@@ -122,26 +123,40 @@ def start_model() -> None:
 
                 decoding_cfg = copy.deepcopy(model.cfg.decoding)
                 with open_dict(decoding_cfg):
-                    decoding_cfg.strategy = "greedy_batch"
-                    decoding_cfg.greedy = decoding_cfg.get("greedy", {})
-                    # Disable CUDA graphs to prevent illegal memory access
-                    # when torch.cuda.empty_cache() is called between jobs
-                    decoding_cfg.greedy.use_cuda_graph_decoder = False
-                    decoding_cfg.greedy.allow_cuda_graphs = False
-                    decoding_cfg.greedy.max_symbols_per_step = 30
-                    decoding_cfg.greedy.max_symbols = 30
-                    if arpa_path:
-                        decoding_cfg.greedy.ngram_lm_model = arpa_path
-                        decoding_cfg.greedy.ngram_lm_alpha = _ngram_lm_alpha
+                    if _beam_size > 1:
+                        # Beam search: explores multiple hypotheses for
+                        # better accuracy at the cost of slower decoding.
+                        decoding_cfg.strategy = "beam"
+                        decoding_cfg.beam = decoding_cfg.get("beam", {})
+                        decoding_cfg.beam.beam_size = _beam_size
+                        decoding_cfg.beam.search_type = "default"
+                        decoding_cfg.beam.score_norm = True
+                        decoding_cfg.beam.return_best_hypothesis = True
+                        decoding_cfg.beam.allow_cuda_graphs = False
+                        if arpa_path:
+                            decoding_cfg.beam.ngram_lm_model = arpa_path
+                            decoding_cfg.beam.ngram_lm_alpha = _ngram_lm_alpha
+                    else:
+                        # Greedy: fastest, single-hypothesis decoding.
+                        decoding_cfg.strategy = "greedy_batch"
+                        decoding_cfg.greedy = decoding_cfg.get("greedy", {})
+                        decoding_cfg.greedy.use_cuda_graph_decoder = False
+                        decoding_cfg.greedy.allow_cuda_graphs = False
+                        decoding_cfg.greedy.max_symbols_per_step = 30
+                        decoding_cfg.greedy.max_symbols = 30
+                        if arpa_path:
+                            decoding_cfg.greedy.ngram_lm_model = arpa_path
+                            decoding_cfg.greedy.ngram_lm_alpha = _ngram_lm_alpha
                 model.change_decoding_strategy(decoding_cfg)
                 if arpa_path:
+                    strategy_name = f"beam (size={_beam_size})" if _beam_size > 1 else "greedy"
                     logger.info(
-                        "NGPU-LM enabled: greedy decoding with n-gram LM "
+                        "NGPU-LM enabled: %s decoding with n-gram LM "
                         "(alpha=%.2f), CUDA graphs disabled",
-                        _ngram_lm_alpha,
+                        strategy_name, _ngram_lm_alpha,
                     )
                 else:
-                    logger.info("Greedy decoding configured with CUDA graphs disabled")
+                    logger.info("Decoding configured with CUDA graphs disabled")
             except Exception as exc:
                 logger.warning(
                     "Could not configure decoding strategy (non-fatal): %s", exc

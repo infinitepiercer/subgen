@@ -97,7 +97,7 @@ def log_startup_config() -> None:
     """Print all configuration values at startup in a clean, readable format."""
     from subgen import subgen_version
     from subgen.config import (
-        asr_engine, parakeet_model_name, ngram_lm_alpha,
+        asr_engine, parakeet_model_name, ngram_lm_alpha, parakeet_beam_size,
         transcribe_device, whisper_model, whisper_threads, concurrent_transcriptions,
         compute_type, model_location, webhookport, debug,
         transcribe_or_translate, translate_source_languages, detect_confidence_threshold,
@@ -141,6 +141,7 @@ def log_startup_config() -> None:
         logging.info(f"    Parakeet Model     : {parakeet_model_name}")
         logging.info(f"    Device             : {transcribe_device}")
         logging.info(f"    N-gram LM Alpha    : {ngram_lm_alpha}")
+        logging.info(f"    Beam Size          : {parakeet_beam_size} ({'beam search' if parakeet_beam_size > 1 else 'greedy'})")
     else:
         logging.info(f"    Whisper Model      : {whisper_model}")
         logging.info(f"    Device             : {transcribe_device}")
