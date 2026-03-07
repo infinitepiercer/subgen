@@ -8,7 +8,17 @@ threads.
 
 import warnings
 
-from subgen.config import app  # The FastAPI instance from config.py
+from subgen.config import app, transcribe_folders  # The FastAPI instance from config.py
+
+
+@app.on_event("startup")
+async def startup_event():
+    if transcribe_folders:
+        import threading
+        from subgen.watcher.folder_monitor import transcribe_existing
+        threading.Thread(target=transcribe_existing, args=(transcribe_folders,), daemon=True).start()
+
+
 from subgen.logging_setup import configure_logging, log_startup_config
 
 # Configure logging (reads ``debug`` internally)

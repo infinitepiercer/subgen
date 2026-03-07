@@ -10,7 +10,6 @@ def main():
         whisper_threads,
         concurrent_transcriptions,
         transcribe_device,
-        transcribe_folders,
         webhookport,
         reload_script_on_change,
         docker_status,
@@ -26,11 +25,6 @@ def main():
     )
 
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
-    if transcribe_folders:
-        from subgen.watcher.folder_monitor import transcribe_existing
-
-        transcribe_existing(transcribe_folders)
 
     import uvicorn
 
