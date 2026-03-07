@@ -23,14 +23,14 @@ _SENTENCE_ENDERS: re.Pattern[str] = re.compile(r"[.!?]$")
 _CLAUSE_BREAK: re.Pattern[str] = re.compile(r",$")
 
 # Maximum segment duration in seconds before forcing a split.
-_MAX_SEGMENT_DURATION: float = 8.0
+_MAX_SEGMENT_DURATION: float = 7.0
 
 # Minimum segment duration before allowing a comma-based split.
 _MIN_SEGMENT_FOR_CLAUSE_SPLIT: float = 3.0
 
 # Gap (seconds) between the end of one word and the start of the next
 # that triggers a segment break (breath / speaker change).
-_GAP_SPLIT_THRESHOLD: float = 0.7
+_GAP_SPLIT_THRESHOLD: float = 0.5
 
 
 def _flush_segment(
@@ -54,6 +54,48 @@ def _flush_segment(
             "compression_ratio": 1.0,
         }
     )
+
+
+def _restore_punctuation_from_text(
+    full_text: str, word_timestamps: List[Dict[str, Any]],
+) -> None:
+    """Map punctuation from the model's full text back onto word timestamps.
+
+    Parakeet-TDT outputs punctuated text in ``output.text`` but the
+    individual word timestamps often contain bare words without trailing
+    punctuation.  This function aligns the two by index and transfers any
+    trailing punctuation (e.g. ``,`` ``.`` ``!`` ``?``) onto the word
+    timestamp entries so downstream splitting can use it.
+
+    Modifies *word_timestamps* in place.
+    """
+    if not full_text or not word_timestamps:
+        return
+
+    tokens = full_text.split()
+    if len(tokens) != len(word_timestamps):
+        # Lengths don't match — try best-effort positional alignment.
+        # Walk both lists, matching stripped words.
+        ti = 0
+        for wt in word_timestamps:
+            if ti >= len(tokens):
+                break
+            bare_word = wt.get("word", "").strip().lower()
+            # Advance through tokens to find a match
+            for look_ahead in range(min(3, len(tokens) - ti)):
+                token = tokens[ti + look_ahead]
+                token_bare = re.sub(r"[^\w']+$", "", token).lower()
+                if token_bare == bare_word:
+                    wt["word"] = token
+                    ti = ti + look_ahead + 1
+                    break
+            else:
+                ti += 1
+        return
+
+    # Perfect 1:1 alignment — just copy token text (preserving punctuation)
+    for token, wt in zip(tokens, word_timestamps):
+        wt["word"] = token
 
 
 def _group_words_into_segments(
@@ -167,13 +209,16 @@ def parakeet_output_to_whisper_result(
                 "start": 0.0,
                 "end": 0.0,
                 "text": full_text,
-                "words": [],
+                "words": None,
                 "no_speech_prob": 0.0,
                 "avg_logprob": 0.0,
                 "compression_ratio": 1.0,
             }
         ]
     else:
+        # Parakeet-TDT outputs punctuated text in full_text but word
+        # timestamps may lack punctuation.  Restore it before grouping.
+        _restore_punctuation_from_text(full_text, word_timestamps)
         segments = _group_words_into_segments(word_timestamps)
 
     # Build the dict that WhisperResult._standardize_result expects.

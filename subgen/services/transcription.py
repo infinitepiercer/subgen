@@ -247,6 +247,12 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
                     w for w in word_ts
                     if float(w.get("start", 0.0)) >= _PARAKEET_CHUNK_OVERLAP
                 ]
+                # Rebuild chunk_text from filtered words so it stays aligned
+                # with word_timestamps (the original chunk_text still contains
+                # the overlap region's words).
+                chunk_text = " ".join(
+                    w.get("word", "").strip() for w in word_ts if w.get("word", "").strip()
+                )
 
             # Offset timestamps by the chunk's actual start position
             if actual_offset > 0 and word_ts:
