@@ -235,6 +235,13 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
             with torch.cuda.amp.autocast(enabled=use_fp16):
                 output = parakeet_model.transcribe([chunk_path], timestamps=True)
 
+            # After the first transcribe call, NeMo's decoder is configured
+            # with timestamps + n-gram LM.  Suppress redundant re-init on
+            # subsequent chunks to avoid reloading the LM from disk (~7s each).
+            if i == 0 and is_chunked:
+                parakeet_model._orig_change_decoding = parakeet_model.change_decoding_strategy
+                parakeet_model.change_decoding_strategy = lambda *a, **kw: None
+
             chunk_output = output[0]
             chunk_text = getattr(chunk_output, "text", "") or ""
             timestamp_data = getattr(chunk_output, "timestamp", {}) or {}
@@ -243,16 +250,27 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
             # For chunks after the first, skip words in the overlap region
             # (they were already captured more accurately by the previous chunk).
             if i > 0 and word_ts and _PARAKEET_CHUNK_OVERLAP > 0:
+                # Count how many words fall in the overlap region BEFORE filtering
+                overlap_count = len([
+                    w for w in word_ts
+                    if float(w.get("start", 0.0)) < _PARAKEET_CHUNK_OVERLAP
+                ])
+                # Filter overlap words from timestamps
                 word_ts = [
                     w for w in word_ts
                     if float(w.get("start", 0.0)) >= _PARAKEET_CHUNK_OVERLAP
                 ]
-                # Rebuild chunk_text from filtered words so it stays aligned
-                # with word_timestamps (the original chunk_text still contains
-                # the overlap region's words).
-                chunk_text = " ".join(
-                    w.get("word", "").strip() for w in word_ts if w.get("word", "").strip()
-                )
+                # Rebuild chunk_text from the ORIGINAL punctuated model text,
+                # skipping the overlap words (which appear at the start).
+                # Parakeet word timestamps lack punctuation, so joining bare
+                # words would strip all punctuation from chunks 2+.
+                original_tokens = chunk_text.split()
+                if overlap_count < len(original_tokens):
+                    chunk_text = " ".join(original_tokens[overlap_count:])
+                else:
+                    chunk_text = " ".join(
+                        w.get("word", "").strip() for w in word_ts if w.get("word", "").strip()
+                    )
 
             # Offset timestamps by the chunk's actual start position
             if actual_offset > 0 and word_ts:
@@ -278,6 +296,11 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
 
         return result
     finally:
+        # Restore change_decoding_strategy if it was suppressed during chunking
+        if hasattr(parakeet_model, '_orig_change_decoding'):
+            parakeet_model.change_decoding_strategy = parakeet_model._orig_change_decoding
+            del parakeet_model._orig_change_decoding
+
         # Clean up chunk temp files (but not the original if it wasn't a temp)
         for cp, _ in chunks:
             if cp != audio_path and os.path.exists(cp):

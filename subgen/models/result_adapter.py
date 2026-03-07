@@ -23,14 +23,14 @@ _SENTENCE_ENDERS: re.Pattern[str] = re.compile(r"[.!?]$")
 _CLAUSE_BREAK: re.Pattern[str] = re.compile(r",$")
 
 # Maximum segment duration in seconds before forcing a split.
-_MAX_SEGMENT_DURATION: float = 7.0
+_MAX_SEGMENT_DURATION: float = 8.0
 
 # Minimum segment duration before allowing a comma-based split.
 _MIN_SEGMENT_FOR_CLAUSE_SPLIT: float = 3.0
 
 # Gap (seconds) between the end of one word and the start of the next
 # that triggers a segment break (breath / speaker change).
-_GAP_SPLIT_THRESHOLD: float = 0.5
+_GAP_SPLIT_THRESHOLD: float = 0.7
 
 
 def _flush_segment(
@@ -133,6 +133,9 @@ def _group_words_into_segments(
             current_words = []
             segment_start = word_start
 
+        if segment_start is None:
+            segment_start = word_start
+
         # Ensure the word text has a leading space for proper concatenation
         # (stable_whisper joins words via ''.join(w.word for w in words)).
         if current_words and not word_text.startswith(" "):
@@ -160,7 +163,7 @@ def _group_words_into_segments(
         if ends_sentence or exceeds_duration or clause_break:
             _flush_segment(segments, current_words, segment_start)
             current_words = []
-            segment_start = word_end  # next segment starts after this word
+            segment_start = None  # will be set when next word arrives
 
     # Flush any remaining words into a final segment.
     _flush_segment(segments, current_words, segment_start)

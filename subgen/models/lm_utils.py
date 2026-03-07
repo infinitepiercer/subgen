@@ -29,7 +29,7 @@ _OPENSUBTITLES_LM_URL = (
 _DEFAULT_NGRAM_ORDER = 3
 # Subtitle lines are short (~5-15 words) so we use more lines than we
 # would for audiobook text to get equivalent n-gram coverage.
-_MAX_LINES = 2_000_000
+_MAX_LINES = 1_000_000
 # NeMo encodes BPE token IDs as Unicode characters offset by this value.
 # This must match NeMo's internal DEFAULT_TOKEN_OFFSET in kenlm_utils.py.
 _TOKEN_OFFSET = 100
@@ -115,7 +115,14 @@ def _tokenize_and_build(
                 if lines_processed >= _MAX_LINES:
                     break
                 line = _clean_subtitle_line(line).lower()
-                if not line or len(line) < 3:
+                if not line or len(line) < 5:
+                    continue
+                # Skip lines that are likely noise (all caps, pure numbers, single words)
+                if line.isupper() and len(line) > 3:
+                    continue
+                if line.replace(" ", "").isdigit():
+                    continue
+                if " " not in line:
                     continue
                 # Tokenize to BPE token IDs, then encode as Unicode
                 # characters (chr(id + _TOKEN_OFFSET)) to match NeMo's
