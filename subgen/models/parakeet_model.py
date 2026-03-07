@@ -15,6 +15,7 @@ from typing import Optional
 import torch
 
 from subgen.config import (
+    boost_words as _boost_words,
     compute_type,
     parakeet_model_name as _parakeet_model_name,
     model_location,
@@ -136,11 +137,26 @@ def start_model() -> None:
                     decoding_cfg.greedy = decoding_cfg.get("greedy", {})
                     decoding_cfg.greedy.use_cuda_graph_decoder = False
                     decoding_cfg.greedy.allow_cuda_graphs = False
-                    decoding_cfg.greedy.max_symbols_per_step = 30
-                    decoding_cfg.greedy.max_symbols = 30
+                    decoding_cfg.greedy.max_symbols_per_step = 100
+                    decoding_cfg.greedy.max_symbols = 100
                     if arpa_path:
                         decoding_cfg.greedy.ngram_lm_model = arpa_path
                         decoding_cfg.greedy.ngram_lm_alpha = _ngram_lm_alpha
+
+                    # GPU-PB word boosting: bias the decoder toward specific
+                    # words/phrases (e.g. character names) without retraining.
+                    if _boost_words:
+                        phrases = [p.strip() for p in _boost_words.split(',') if p.strip()]
+                        if phrases:
+                            decoding_cfg.greedy.boosting_tree = decoding_cfg.greedy.get("boosting_tree", {})
+                            decoding_cfg.greedy.boosting_tree.key_phrases_list = phrases
+                            decoding_cfg.greedy.boosting_tree.context_score = 1.0
+                            decoding_cfg.greedy.boosting_tree.depth_scaling = 2.0
+                            decoding_cfg.greedy.boosting_tree_alpha = 0.5
+                            logger.info(
+                                "Word boosting enabled for %d phrases", len(phrases),
+                            )
+
                 model.change_decoding_strategy(decoding_cfg)
                 if arpa_path:
                     logger.info(

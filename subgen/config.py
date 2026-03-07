@@ -42,8 +42,10 @@ jellyfinserver: str = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER',
 # ASR Backend Selection
 # ---------------------------------------------------------------------------
 asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper' or 'parakeet'
-parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt_ctc-1.1b')
+parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-0.6b-v3')
 ngram_lm_alpha: float = float(os.getenv('NGRAM_LM_ALPHA', '0.3'))
+# Comma-separated list of words/phrases to boost recognition of (e.g. character names)
+boost_words: str = os.getenv('BOOST_WORDS', '')
 
 # ---------------------------------------------------------------------------
 # Whisper Configuration
@@ -89,7 +91,7 @@ reload_script_on_change: bool = convert_to_bool(os.getenv('RELOAD_SCRIPT_ON_CHAN
 lrc_for_audio_files: bool = convert_to_bool(os.getenv('LRC_FOR_AUDIO_FILES', True))
 custom_regroup: str = os.getenv('CUSTOM_REGROUP', 'default')
 min_subtitle_duration: float = float(os.getenv('MIN_SUBTITLE_DURATION', '0'))
-normalize_audio: bool = convert_to_bool(os.getenv('NORMALIZE_AUDIO', False))
+normalize_audio: bool = convert_to_bool(os.getenv('NORMALIZE_AUDIO', True))
 detect_language_length: int = int(os.getenv('DETECT_LANGUAGE_LENGTH', 30))
 detect_language_offset: int = int(os.getenv('DETECT_LANGUAGE_OFFSET', 0))
 model_cleanup_delay: int = int(os.getenv('MODEL_CLEANUP_DELAY', 30))

@@ -27,6 +27,16 @@ def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
             input_stream = ffmpeg.input('pipe:0')
             run_kwargs = {'input': audio_input}
 
+        # Filter chain to maximise speech intelligibility:
+        #   1. highpass=200  – remove low-frequency rumble / HVAC noise
+        #   2. acompressor   – bring up quiet speech (fast attack, slow release)
+        #   3. loudnorm      – EBU R128 loudness normalisation to -16 LUFS
+        af_chain = (
+            'highpass=f=200,'
+            'acompressor=threshold=-25dB:ratio=4:attack=5:release=200,'
+            'loudnorm=I=-16:TP=-1.5:LRA=11'
+        )
+
         out, _ = (
             input_stream
             .output(
@@ -35,7 +45,7 @@ def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
                 acodec='pcm_s16le',
                 ar=16000,
                 ac=1,
-                af='loudnorm=I=-16:TP=-1.5:LRA=11',
+                af=af_chain,
             )
             .run(capture_stdout=True, capture_stderr=True, **run_kwargs)
         )
