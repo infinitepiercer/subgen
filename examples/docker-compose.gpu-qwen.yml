@@ -1,0 +1,70 @@
+# =============================================================================
+# Subgen — GPU + Qwen3-ASR (Best Accuracy)
+# =============================================================================
+# Best for: highest accuracy English transcription with word-level timestamps.
+# Qwen3-ASR-1.7B achieves state-of-the-art WER on most English benchmarks,
+# beating Whisper Large V3 and Parakeet. Uses a companion forced aligner
+# (Qwen3-ForcedAligner-0.6B) for word-level timestamps.
+#
+# VRAM: ~7-8 GB (model + aligner in bf16)
+# Supports 52 languages via auto-detection.
+#
+# Build the image with Qwen support first:
+#   docker compose -f docker-compose.gpu-qwen.yml build
+# Then start:
+#   docker compose -f docker-compose.gpu-qwen.yml up -d
+# =============================================================================
+
+services:
+  subgen:
+    container_name: subgen
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        ASR_ENGINE: qwen
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/subgen/models:rw       # persist downloaded models
+      - ./cache:/cache:rw                # persist HuggingFace model downloads
+      - /path/to/media:/media:rw         # match your media server paths
+    environment:
+      # --- GPU ---
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      # --- ASR Engine ---
+      ASR_ENGINE: qwen
+      QWEN_MODEL: Qwen/Qwen3-ASR-1.7B
+      QWEN_ALIGNER_MODEL: Qwen/Qwen3-ForcedAligner-0.6B
+      QWEN_MAX_NEW_TOKENS: 4096
+      TRANSCRIBE_DEVICE: cuda
+
+      # --- Audio Preprocessing ---
+      NORMALIZE_AUDIO: "true"            # EBU R128 normalization + noise reduction
+
+      # --- Transcription Mode ---
+      TRANSCRIBE_OR_TRANSLATE: transcribe
+      FORCE_DETECTED_LANGUAGE_TO: en
+
+      # --- Subtitle Output ---
+      SUBTITLE_LANGUAGE_NAME: en
+      SUBTITLE_LANGUAGE_NAMING_TYPE: ISO_639_1
+      CUSTOM_REGROUP: default
+
+      # --- Resource Management ---
+      CLEAR_VRAM_ON_COMPLETE: "true"     # free GPU memory when idle
+      MODEL_CLEANUP_DELAY: 60            # seconds to wait before unloading model
+
+      # --- Server ---
+      WEBHOOK_PORT: 9000
+      DEBUG: "false"

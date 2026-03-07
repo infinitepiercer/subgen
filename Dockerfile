@@ -1,7 +1,6 @@
 FROM nvidia/cuda:12.3.2-base-ubuntu22.04
 
-# Build arg: set to "parakeet" to include NeMo for the Parakeet ASR backend.
-# Default "whisper" keeps the image lean (no NeMo overhead).
+# Build arg: "whisper" (default), "parakeet" (NeMo), or "qwen" (Qwen3-ASR).
 ARG ASR_ENGINE=whisper
 
 # Layer 1: System packages (~200MB, rarely changes)
@@ -56,6 +55,14 @@ RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
         cp bin/lmplz /usr/local/bin/ && \
         rm -rf /tmp/kenlm ; \
     fi
+
+# Layer 3d: Conditional Qwen ASR installation
+COPY requirements-qwen.txt /tmp/requirements-qwen.txt
+RUN if [ "$ASR_ENGINE" = "qwen" ]; then \
+        python3 -m pip install --no-cache-dir -r /tmp/requirements-qwen.txt && \
+        python3 -m pip install --no-cache-dir flash-attn --no-build-isolation || true ; \
+    fi && \
+    rm /tmp/requirements-qwen.txt
 
 WORKDIR /subgen
 

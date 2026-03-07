@@ -130,6 +130,9 @@ def _start_model() -> None:
     if asr_engine == 'parakeet':
         from subgen.models.parakeet_model import start_model as start_parakeet
         start_parakeet()
+    elif asr_engine == 'qwen':
+        from subgen.models.qwen_model import start_model as start_qwen
+        start_qwen()
     else:
         from subgen.models.whisper_model import start_model as start_whisper
         start_whisper()
@@ -140,6 +143,9 @@ def _delete_model() -> None:
     if asr_engine == 'parakeet':
         from subgen.models.parakeet_model import delete_model as delete_parakeet
         delete_parakeet()
+    elif asr_engine == 'qwen':
+        from subgen.models.qwen_model import delete_model as delete_qwen
+        delete_qwen()
     else:
         from subgen.models.whisper_model import delete_model as delete_whisper
         delete_whisper()
@@ -341,6 +347,80 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
         for cp, _ in chunks:
             if cp != audio_path and os.path.exists(cp):
                 os.unlink(cp)
+        if cleanup_path and os.path.exists(cleanup_path):
+            os.unlink(cleanup_path)
+
+
+# ---------------------------------------------------------------------------
+# Qwen3-ASR transcription backend
+# ---------------------------------------------------------------------------
+
+
+def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
+    """Transcribe using Qwen3-ASR model.
+
+    Accepts audio as a file path (str), raw bytes, or a numpy array.
+    Returns a WhisperResult-compatible object via the result adapter.
+    """
+    import tempfile
+    import wave
+
+    from subgen.models.qwen_model import model as qwen_model
+    from subgen.models.result_adapter import qwen_output_to_whisper_result
+
+    cleanup_path: str | None = None
+
+    # Qwen3-ASR accepts file paths — convert other formats to a temp WAV.
+    if isinstance(audio_data, (bytes, bytearray)):
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            f.write(audio_data)
+            audio_path = f.name
+        cleanup_path = audio_path
+    elif isinstance(audio_data, str):
+        audio_path = audio_data
+    elif hasattr(audio_data, '__array__'):  # numpy array
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            audio_path = f.name
+        audio_int16 = (audio_data * 32768.0).astype(np.int16)
+        with wave.open(audio_path, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(audio_int16.tobytes())
+        cleanup_path = audio_path
+    else:
+        raise TypeError(f"Unsupported audio data type: {type(audio_data)}")
+
+    try:
+        # Map language code to Qwen's expected format (e.g. "en" -> "English")
+        qwen_language = None
+        if language:
+            _LANG_MAP = {
+                "en": "English", "fr": "French", "de": "German", "es": "Spanish",
+                "it": "Italian", "pt": "Portuguese", "ru": "Russian", "ja": "Japanese",
+                "ko": "Korean", "zh": "Chinese", "nl": "Dutch", "pl": "Polish",
+                "sv": "Swedish", "da": "Danish", "fi": "Finnish", "hu": "Hungarian",
+                "cs": "Czech", "ro": "Romanian", "bg": "Bulgarian", "hr": "Croatian",
+                "sk": "Slovak", "sl": "Slovenian", "et": "Estonian", "lv": "Latvian",
+                "lt": "Lithuanian", "el": "Greek", "mt": "Maltese", "uk": "Ukrainian",
+            }
+            qwen_language = _LANG_MAP.get(language)
+
+        logger.info("Transcribing with Qwen3-ASR (language=%s)", qwen_language or "auto-detect")
+
+        results = qwen_model.transcribe(
+            audio=[audio_path],
+            language=[qwen_language] if qwen_language else None,
+            return_time_stamps=True,
+        )
+
+        result = qwen_output_to_whisper_result(
+            results[0],
+            language=language or getattr(results[0], "language", "en") or "en",
+        )
+
+        return result
+    finally:
         if cleanup_path and os.path.exists(cleanup_path):
             os.unlink(cleanup_path)
 
@@ -685,6 +765,12 @@ def gen_subtitles(
                 cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
                 if cleaned_regroup_str and hasattr(result, 'regroup'):
                     result.regroup(cleaned_regroup_str)
+        elif asr_engine == 'qwen':
+            result = _transcribe_qwen(data, force_language.to_iso_639_1(), actual_task)
+            if custom_regroup and custom_regroup.lower() != "default":
+                cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
+                if cleaned_regroup_str and hasattr(result, 'regroup'):
+                    result.regroup(cleaned_regroup_str)
         else:
             args = {}
             display_name = os.path.basename(file_path)
@@ -823,6 +909,22 @@ def asr_task_worker(task_data: dict) -> None:
 
             result = _transcribe_parakeet(audio_data, language, actual_task)
             # Apply custom_regroup via stable-ts post-processing if requested
+            if custom_regroup and custom_regroup.lower() != "default":
+                cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
+                if cleaned_regroup_str and hasattr(result, 'regroup'):
+                    result.regroup(cleaned_regroup_str)
+        elif asr_engine == 'qwen':
+            if encode:
+                audio_data = file_content
+            else:
+                audio_data = (
+                    np.frombuffer(file_content, np.int16)
+                    .flatten()
+                    .astype(np.float32)
+                    / 32768.0
+                )
+
+            result = _transcribe_qwen(audio_data, language, actual_task)
             if custom_regroup and custom_regroup.lower() != "default":
                 cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
                 if cleaned_regroup_str and hasattr(result, 'regroup'):

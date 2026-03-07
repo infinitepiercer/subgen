@@ -1,0 +1,4 @@
+# Extra dependencies for the Qwen3-ASR backend.
+# Install alongside the base requirements:
+#   pip install -r requirements.txt -r requirements-qwen.txt
+qwen-asr

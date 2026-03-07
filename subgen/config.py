@@ -41,11 +41,18 @@ jellyfinserver: str = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER',
 # ---------------------------------------------------------------------------
 # ASR Backend Selection
 # ---------------------------------------------------------------------------
-asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper' or 'parakeet'
+asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper', 'parakeet', or 'qwen'
 parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-0.6b-v3')
 ngram_lm_alpha: float = float(os.getenv('NGRAM_LM_ALPHA', '0.3'))
 # Comma-separated list of words/phrases to boost recognition of (e.g. character names)
 boost_words: str = os.getenv('BOOST_WORDS', '')
+
+# ---------------------------------------------------------------------------
+# Qwen ASR Configuration
+# ---------------------------------------------------------------------------
+qwen_model_name: str = os.getenv('QWEN_MODEL', 'Qwen/Qwen3-ASR-1.7B')
+qwen_aligner_model: str = os.getenv('QWEN_ALIGNER_MODEL', 'Qwen/Qwen3-ForcedAligner-0.6B')
+qwen_max_new_tokens: int = int(os.getenv('QWEN_MAX_NEW_TOKENS', '4096'))
 
 # ---------------------------------------------------------------------------
 # Whisper Configuration

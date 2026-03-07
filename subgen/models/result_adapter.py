@@ -265,3 +265,78 @@ def parakeet_output_to_whisper_result(
     )
 
     return WhisperResult(result_dict, check_sorted=False)
+
+
+def qwen_output_to_whisper_result(
+    qwen_output: Any,
+    language: str = "en",
+) -> "WhisperResult":
+    """Convert a Qwen3-ASR transcription output to a ``stable_whisper.WhisperResult``.
+
+    Parameters
+    ----------
+    qwen_output:
+        A single element from the list returned by ``model.transcribe(...)``.
+        Expected attributes:
+          - ``.text``  -- full transcription string
+          - ``.language``  -- detected language
+          - ``.time_stamps``  -- list of lists of word-level timestamp objects,
+            each with ``.text``, ``.start_time``, ``.end_time``.
+    language:
+        ISO 639-1 language code to store in the result (default ``"en"``).
+    """
+    from stable_whisper import WhisperResult  # type: ignore[import-not-found]
+
+    full_text: str = getattr(qwen_output, "text", "") or ""
+    raw_stamps = getattr(qwen_output, "time_stamps", None)
+
+    # Flatten nested timestamp lists (Qwen returns list-of-lists).
+    word_timestamps: List[Dict[str, Any]] = []
+    if raw_stamps:
+        for item in raw_stamps:
+            if isinstance(item, list):
+                for w in item:
+                    word_timestamps.append({
+                        "word": getattr(w, "text", str(w)),
+                        "start": float(getattr(w, "start_time", 0.0)),
+                        "end": float(getattr(w, "end_time", 0.0)),
+                    })
+            elif hasattr(item, "text"):
+                word_timestamps.append({
+                    "word": item.text,
+                    "start": float(getattr(item, "start_time", 0.0)),
+                    "end": float(getattr(item, "end_time", 0.0)),
+                })
+
+    if not word_timestamps:
+        logger.warning(
+            "Qwen output contains no word timestamps; "
+            "creating a single segment from the full text."
+        )
+        segments = [
+            {
+                "start": 0.0,
+                "end": 0.0,
+                "text": full_text,
+                "words": None,
+                "no_speech_prob": 0.0,
+                "avg_logprob": 0.0,
+                "compression_ratio": 1.0,
+            }
+        ]
+    else:
+        segments = _group_words_into_segments(word_timestamps)
+
+    result_dict: Dict[str, Any] = {
+        "language": language,
+        "segments": segments,
+    }
+
+    logger.debug(
+        "Adapted Qwen output: %d segments, %d words, language='%s'",
+        len(segments),
+        len(word_timestamps),
+        language,
+    )
+
+    return WhisperResult(result_dict, check_sorted=False)
