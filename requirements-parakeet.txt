@@ -5,4 +5,4 @@
 # NeMo pulls in PyTorch, torchaudio, etc. but those are already
 # provided by the base Dockerfile layers, so the net download is
 # mainly the NeMo framework, Cython decoders, and model weights.
-nemo_toolkit[asr]>=2.0.0
+nemo_toolkit[asr]>=2.0.0,<2.6.0

@@ -675,6 +675,10 @@ def gen_subtitles(
             translated_count = translate_segments(result, detect_confidence_threshold, debug)
             logging.info(f"Pass 2: Translated {translated_count} non-English segments to English")
 
+        # Enforce subtitle display constraints (max line length, overlap, gaps)
+        from subgen.services.subtitle_constraints import enforce_display_constraints
+        enforce_display_constraints(result)
+
         # If it is an audio file, write the LRC file
         if is_audio_file and lrc_for_audio_files:
             write_lrc(result, file_name + ".lrc")
@@ -820,6 +824,10 @@ def asr_task_worker(task_data: dict) -> None:
             logging.info("Pass 1: ASR transcription complete. Starting Pass 2: Translation...")
             translated_count = translate_segments(result, detect_confidence_threshold, debug)
             logging.info(f"Pass 2: Translated {translated_count} non-English segments to English")
+
+        # Enforce subtitle display constraints (max line length, overlap, gaps)
+        from subgen.services.subtitle_constraints import enforce_display_constraints
+        enforce_display_constraints(result)
 
         # Set result for blocking endpoint, using the requested output format
         if result_container:

@@ -28,7 +28,19 @@ COPY requirements-parakeet.txt /tmp/requirements-parakeet.txt
 RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
         python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
         python3 -m pip install --no-cache-dir -r /tmp/requirements-parakeet.txt && \
-        python3 -m pip install --no-cache-dir --force-reinstall --no-binary hdbscan hdbscan==0.8.37 ; \
+        # If NeMo upgraded numpy past v1, rebuild hdbscan without downgrading numpy
+        NUMPY_MAJOR=$(python3 -c "import numpy; print(numpy.__version__.split('.')[0])") && \
+        if [ "$NUMPY_MAJOR" -ge 2 ]; then \
+            python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
+                --no-build-isolation --no-binary :all: hdbscan==0.8.37 ; \
+        else \
+            python3 -m pip install --no-cache-dir --force-reinstall --no-binary hdbscan hdbscan==0.8.37 ; \
+        fi && \
+        # Ensure torchaudio matches installed torch version
+        TORCH_VER=$(python3 -c "import torch; print(torch.__version__.split('+')[0])") && \
+        pip install --no-cache-dir "torchaudio==${TORCH_VER}" \
+            --index-url https://download.pytorch.org/whl/cu124 || \
+        pip install --no-cache-dir torchaudio ; \
     fi && \
     rm /tmp/requirements-parakeet.txt
 
