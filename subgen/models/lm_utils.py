@@ -181,7 +181,10 @@ def ensure_ngram_lm(
         )
         return None
 
-    arpa_path = os.path.join(cache_dir, f"parakeet_opensubs_{ngram_order}gram.arpa")
+    # Include vocab size in filename to prevent cache collisions when
+    # switching between models with different tokenizers.
+    vocab_size = getattr(tokenizer, "vocab_size", 0)
+    arpa_path = os.path.join(cache_dir, f"parakeet_opensubs_v{vocab_size}_{ngram_order}gram.arpa")
 
     if os.path.exists(arpa_path):
         logger.info("Using cached n-gram LM: %s", arpa_path)

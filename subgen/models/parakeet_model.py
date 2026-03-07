@@ -90,18 +90,23 @@ def start_model() -> None:
             logger.info("Parakeet compute_type=%s (autocast applied at inference)", compute_type)
 
             # For longer audio, switch to local attention to avoid OOM.
-            # Window size 128 balances accuracy and VRAM — supports up to ~3h.
-            # change_subsampling_conv_chunking_factor(1) auto-selects optimal
-            # chunking for the subsampling convolution layers.
+            # Models like parakeet-tdt_ctc-1.1b already use local attention
+            # natively; skip if already configured to avoid overriding.
             try:
-                model.change_attention_model(
-                    "rel_pos_local_attn", [128, 128]
+                attn_type = getattr(
+                    getattr(model.cfg, "encoder", None), "att_context_style", None
                 )
+                if attn_type and "local" in str(attn_type):
+                    logger.debug("Model already uses local attention — skipping switch")
+                else:
+                    model.change_attention_model(
+                        "rel_pos_local_attn", [128, 128]
+                    )
+                    logger.debug("Switched Parakeet to local attention (window=128)")
                 model.change_subsampling_conv_chunking_factor(1)
-                logger.debug("Switched Parakeet to local attention (window=128) with conv chunking")
             except Exception as exc:
                 logger.warning(
-                    "Could not switch attention model (non-fatal): %s", exc
+                    "Could not configure attention model (non-fatal): %s", exc
                 )
 
             # Disable CUDA graphs to prevent illegal memory access when
