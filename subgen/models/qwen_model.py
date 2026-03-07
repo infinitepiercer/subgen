@@ -73,6 +73,11 @@ def start_model() -> None:
             use_bf16 = device_map != "cpu" and compute_type in ("auto", "float16", "int8_float16")
             dtype = torch.bfloat16 if use_bf16 else torch.float32
 
+            # Suppress noisy "Setting pad_token_id to eos_token_id" warnings
+            # that fire on every chunk during generation.
+            import transformers
+            transformers.utils.logging.set_verbosity_error()
+
             logger.info(
                 "Loading Qwen ASR model '%s' on device '%s' (dtype=%s)",
                 _qwen_model_name, device_map, dtype,

@@ -12,3 +12,4 @@ subgen.env
 /models/
 !subgen/models/
 __pycache__/
+docker-compose-qwen.md
