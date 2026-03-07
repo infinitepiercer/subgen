@@ -69,17 +69,31 @@ def _capitalize_segments(result) -> None:
     Whisper sometimes outputs all-lowercase text depending on the model and
     language.  This post-processes the result in-place so subtitles have
     proper sentence capitalization.
+
+    stable_whisper's ``Segment.text`` is a read-only property derived from
+    its words, so we modify the word objects directly.
     """
     for seg in result.segments:
-        if not seg.text:
+        if not hasattr(seg, "words") or not seg.words:
             continue
-        text = seg.text.strip()
-        # Capitalize first character of the segment
-        if text and text[0].islower():
-            text = text[0].upper() + text[1:]
-        # Capitalize after sentence-ending punctuation
-        text = _SENTENCE_START_RE.sub(lambda m: m.group(0)[:-1] + m.group(1).upper(), text)
-        seg.text = text
+        # Capitalize the first letter of the first word in the segment.
+        first_word = seg.words[0]
+        w = first_word.word
+        stripped = w.lstrip()
+        if stripped and stripped[0].islower():
+            leading = w[: len(w) - len(stripped)]
+            first_word.word = leading + stripped[0].upper() + stripped[1:]
+        # Capitalize the first letter after sentence-ending punctuation
+        # within the same segment (rare, but possible).
+        for i in range(1, len(seg.words)):
+            prev = seg.words[i - 1].word.rstrip()
+            if prev and prev[-1] in ".!?":
+                cur = seg.words[i]
+                cw = cur.word
+                cs = cw.lstrip()
+                if cs and cs[0].islower():
+                    lead = cw[: len(cw) - len(cs)]
+                    cur.word = lead + cs[0].upper() + cs[1:]
 
 
 def _transcribe_with_kwarg_filter(model, **kwargs):
