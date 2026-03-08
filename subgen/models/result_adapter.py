@@ -295,8 +295,8 @@ def parakeet_output_to_whisper_result(
     # Assess alignment quality and redistribute if collapsed.
     audio_duration = 0.0
     if audio_path:
-        from subgen.services.transcription import _get_audio_duration
-        audio_duration = _get_audio_duration(audio_path)
+        from subgen.media.scene_detection import get_audio_duration
+        audio_duration = get_audio_duration(audio_path)
 
     if audio_duration <= 0 and final_words:
         audio_duration = max(w["end"] for w in final_words)
@@ -616,8 +616,8 @@ def qwen_output_to_whisper_result(
     # Assess alignment quality and redistribute if collapsed.
     audio_duration = 0.0
     if audio_path:
-        from subgen.services.transcription import _get_audio_duration
-        audio_duration = _get_audio_duration(audio_path)
+        from subgen.media.scene_detection import get_audio_duration
+        audio_duration = get_audio_duration(audio_path)
 
     if audio_duration <= 0 and final_words:
         # Estimate from the last word's end time as fallback.

@@ -156,55 +156,45 @@ def _delete_model() -> None:
 # ---------------------------------------------------------------------------
 
 
-_PARAKEET_CHUNK_SECONDS: int = 600  # 10 minutes per chunk
-_PARAKEET_CHUNK_OVERLAP: int = 10   # seconds of overlap between chunks
+_MAX_SCENE_SECONDS: float = 180.0  # 3 minutes — matches ForcedAligner limit
 
 
-def _get_audio_duration(audio_path: str) -> float:
-    """Return the duration of an audio file in seconds using ffprobe."""
-    import subprocess
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-            capture_output=True, text=True, timeout=30,
-        )
-        return float(result.stdout.strip())
-    except Exception:
-        return 0.0
+def _ensure_audio_path(audio_data: object) -> tuple[str, str | None]:
+    """Convert audio data to a file path suitable for ASR engines.
 
-
-def _split_audio_chunks(
-    audio_path: str, chunk_seconds: int, overlap: int = 0,
-) -> list[tuple[str, float]]:
-    """Split an audio file into overlapping chunks using ffmpeg.
-
-    Returns list of (temp_file_path, actual_start_offset) tuples.
-    The overlap prevents words at chunk boundaries from being lost.
+    Accepts a file path (str), raw bytes, or a numpy array.
+    Returns ``(audio_path, cleanup_path)`` where *cleanup_path* is set
+    when a temporary file was created and should be deleted by the caller.
     """
-    import subprocess
     import tempfile
+    import wave
 
-    duration = _get_audio_duration(audio_path)
-    if duration <= 0 or duration <= chunk_seconds:
-        return [(audio_path, 0.0)]
+    if isinstance(audio_data, (bytes, bytearray)):
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            f.write(audio_data)
+            return f.name, f.name
+    if isinstance(audio_data, str):
+        return audio_data, None
+    if hasattr(audio_data, '__array__'):
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            audio_path = f.name
+        audio_int16 = (audio_data * 32768.0).astype(np.int16)
+        with wave.open(audio_path, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(audio_int16.tobytes())
+        return audio_path, audio_path
+    raise TypeError(f"Unsupported audio data type: {type(audio_data)}")
 
-    step = chunk_seconds - overlap
-    chunks: list[tuple[str, float]] = []
-    offset = 0.0
-    while offset < duration:
-        chunk_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-        chunk_file.close()
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", audio_path, "-ss", str(offset),
-             "-t", str(chunk_seconds), "-ar", "16000", "-ac", "1",
-             "-c:a", "pcm_s16le", chunk_file.name],
-            capture_output=True, timeout=120,
-        )
-        chunks.append((chunk_file.name, offset))
-        offset += step
 
-    return chunks
+def _cleanup_scenes(scenes: list[tuple[str, float]], audio_path: str, cleanup_path: str | None) -> None:
+    """Remove temporary scene files and the converted audio file if any."""
+    for sp, _ in scenes:
+        if sp != audio_path and os.path.exists(sp):
+            os.unlink(sp)
+    if cleanup_path and os.path.exists(cleanup_path):
+        os.unlink(cleanup_path)
 
 
 def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object:
@@ -213,53 +203,24 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
     Accepts audio as a file path (str), raw bytes, or a numpy array.
     Returns a WhisperResult-compatible object via the result adapter.
 
-    Long audio files are automatically split into chunks to avoid CUDA OOM.
+    Long audio files are automatically split into scenes at silence
+    boundaries using auditok (falls back to fixed-size splitting).
     Inference runs in fp16 via torch.cuda.amp.autocast for reduced VRAM usage.
     """
-    import tempfile
-    import wave
-
     import torch
 
+    from subgen.media.scene_detection import split_audio_scenes
     from subgen.models.parakeet_model import model as parakeet_model
     from subgen.models.result_adapter import parakeet_output_to_whisper_result
 
-    cleanup_path: str | None = None
-
-    # Parakeet requires a file path -- convert other formats to a temp WAV.
-    if isinstance(audio_data, (bytes, bytearray)):
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            f.write(audio_data)
-            audio_path = f.name
-        cleanup_path = audio_path
-    elif isinstance(audio_data, str):
-        audio_path = audio_data
-    elif hasattr(audio_data, '__array__'):  # numpy array
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            audio_path = f.name
-        # Write as 16-bit PCM WAV at 16 kHz mono
-        audio_int16 = (audio_data * 32768.0).astype(np.int16)
-        with wave.open(audio_path, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            wf.writeframes(audio_int16.tobytes())
-        cleanup_path = audio_path
-    else:
-        raise TypeError(f"Unsupported audio data type: {type(audio_data)}")
-
-    chunks: list[tuple[str, float]] = []
+    audio_path, cleanup_path = _ensure_audio_path(audio_data)
+    scenes: list[tuple[str, float]] = []
     try:
-        chunks = _split_audio_chunks(
-            audio_path, _PARAKEET_CHUNK_SECONDS, _PARAKEET_CHUNK_OVERLAP,
-        )
-        is_chunked = len(chunks) > 1 or chunks[0][0] != audio_path
+        scenes = split_audio_scenes(audio_path, _MAX_SCENE_SECONDS)
+        is_chunked = len(scenes) > 1 or scenes[0][0] != audio_path
 
         if is_chunked:
-            logger.info(
-                "Audio split into %d chunks of %ds each (%ds overlap)",
-                len(chunks), _PARAKEET_CHUNK_SECONDS, _PARAKEET_CHUNK_OVERLAP,
-            )
+            logger.info("Audio split into %d scene(s) for Parakeet", len(scenes))
 
         all_word_timestamps: list[dict] = []
         full_text_parts: list[str] = []
@@ -270,62 +231,36 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
             and compute_type in ("auto", "float16", "int8_float16")
         )
 
-        for i, (chunk_path, actual_offset) in enumerate(chunks):
+        for i, (scene_path, scene_offset) in enumerate(scenes):
             if is_chunked:
-                logger.info("Transcribing chunk %d/%d (offset %.1fs)", i + 1, len(chunks), actual_offset)
+                logger.info("Transcribing scene %d/%d (offset %.1fs)", i + 1, len(scenes), scene_offset)
 
             with torch.cuda.amp.autocast(enabled=use_fp16):
-                output = parakeet_model.transcribe([chunk_path], timestamps=True)
+                output = parakeet_model.transcribe([scene_path], timestamps=True)
 
             # After the first transcribe call, NeMo's decoder is configured
             # with timestamps + n-gram LM.  Suppress redundant re-init on
-            # subsequent chunks to avoid reloading the LM from disk (~7s each).
+            # subsequent scenes to avoid reloading the LM from disk (~7s each).
             if i == 0 and is_chunked:
                 parakeet_model._orig_change_decoding = parakeet_model.change_decoding_strategy
                 parakeet_model.change_decoding_strategy = lambda *a, **kw: None
 
-            chunk_output = output[0]
-            chunk_text = getattr(chunk_output, "text", "") or ""
-            timestamp_data = getattr(chunk_output, "timestamp", {}) or {}
+            scene_output = output[0]
+            scene_text = getattr(scene_output, "text", "") or ""
+            timestamp_data = getattr(scene_output, "timestamp", {}) or {}
             word_ts = timestamp_data.get("word", [])
 
-            # For chunks after the first, skip words in the overlap region
-            # (they were already captured more accurately by the previous chunk).
-            if i > 0 and word_ts and _PARAKEET_CHUNK_OVERLAP > 0:
-                # Count how many words fall in the overlap region BEFORE filtering
-                overlap_count = len([
-                    w for w in word_ts
-                    if float(w.get("start", 0.0)) < _PARAKEET_CHUNK_OVERLAP
-                ])
-                # Filter overlap words from timestamps
-                word_ts = [
-                    w for w in word_ts
-                    if float(w.get("start", 0.0)) >= _PARAKEET_CHUNK_OVERLAP
-                ]
-                # Rebuild chunk_text from the ORIGINAL punctuated model text,
-                # skipping the overlap words (which appear at the start).
-                # Parakeet word timestamps lack punctuation, so joining bare
-                # words would strip all punctuation from chunks 2+.
-                original_tokens = chunk_text.split()
-                if overlap_count < len(original_tokens):
-                    chunk_text = " ".join(original_tokens[overlap_count:])
-                else:
-                    chunk_text = " ".join(
-                        w.get("word", "").strip() for w in word_ts if w.get("word", "").strip()
-                    )
-
-            # Offset timestamps by the chunk's actual start position
-            if actual_offset > 0 and word_ts:
+            # Offset timestamps by the scene's start position in the original audio
+            if scene_offset > 0 and word_ts:
                 for w in word_ts:
-                    w["start"] = float(w.get("start", 0.0)) + actual_offset
-                    w["end"] = float(w.get("end", 0.0)) + actual_offset
+                    w["start"] = float(w.get("start", 0.0)) + scene_offset
+                    w["end"] = float(w.get("end", 0.0)) + scene_offset
 
             all_word_timestamps.extend(word_ts)
-            full_text_parts.append(chunk_text)
+            full_text_parts.append(scene_text)
 
         # Build a combined result using the adapter
         if is_chunked and all_word_timestamps:
-            # Create a synthetic nemo output for the adapter
             class _CombinedOutput:
                 def __init__(self, text: str, word_timestamps: list[dict]):
                     self.text = text
@@ -343,12 +278,7 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
             parakeet_model.change_decoding_strategy = parakeet_model._orig_change_decoding
             del parakeet_model._orig_change_decoding
 
-        # Clean up chunk temp files (but not the original if it wasn't a temp)
-        for cp, _ in chunks:
-            if cp != audio_path and os.path.exists(cp):
-                os.unlink(cp)
-        if cleanup_path and os.path.exists(cleanup_path):
-            os.unlink(cleanup_path)
+        _cleanup_scenes(scenes, audio_path, cleanup_path)
 
 
 # ---------------------------------------------------------------------------
@@ -361,36 +291,17 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
 
     Accepts audio as a file path (str), raw bytes, or a numpy array.
     Returns a WhisperResult-compatible object via the result adapter.
-    """
-    import tempfile
-    import wave
 
+    Long audio files are automatically split into scenes at silence
+    boundaries (180s max, matching ForcedAligner limit).
+    """
+    from subgen.config import qwen_clean_text
+    from subgen.media.scene_detection import get_audio_duration, split_audio_scenes
     from subgen.models.qwen_model import model as qwen_model, compute_dynamic_token_limit
     from subgen.models.result_adapter import qwen_output_to_whisper_result
 
-    cleanup_path: str | None = None
-
-    # Qwen3-ASR accepts file paths — convert other formats to a temp WAV.
-    if isinstance(audio_data, (bytes, bytearray)):
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            f.write(audio_data)
-            audio_path = f.name
-        cleanup_path = audio_path
-    elif isinstance(audio_data, str):
-        audio_path = audio_data
-    elif hasattr(audio_data, '__array__'):  # numpy array
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            audio_path = f.name
-        audio_int16 = (audio_data * 32768.0).astype(np.int16)
-        with wave.open(audio_path, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            wf.writeframes(audio_int16.tobytes())
-        cleanup_path = audio_path
-    else:
-        raise TypeError(f"Unsupported audio data type: {type(audio_data)}")
-
+    audio_path, cleanup_path = _ensure_audio_path(audio_data)
+    scenes: list[tuple[str, float]] = []
     try:
         # Map language code to Qwen's expected format (e.g. "en" -> "English")
         qwen_language = None
@@ -408,60 +319,93 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
 
         logger.info("Transcribing with Qwen3-ASR (language=%s)", qwen_language or "auto-detect")
 
-        # Dynamic token budget: scale max_new_tokens to audio duration
-        audio_duration = _get_audio_duration(audio_path)
-        original_max_tokens = getattr(qwen_model, 'max_new_tokens', None)
-        if audio_duration > 0:
-            dynamic_limit = compute_dynamic_token_limit(audio_duration)
-            if original_max_tokens and dynamic_limit != original_max_tokens:
-                qwen_model.max_new_tokens = dynamic_limit
-                logger.info(
-                    "Dynamic token budget: %d tokens for %.0fs audio (was %d)",
-                    dynamic_limit, audio_duration, original_max_tokens,
-                )
+        # Split long audio into scenes at silence boundaries
+        scenes = split_audio_scenes(audio_path, _MAX_SCENE_SECONDS)
+        is_chunked = len(scenes) > 1 or scenes[0][0] != audio_path
 
-            # Pre-flight audio limit check
-            if audio_duration > 180:
-                logger.warning(
-                    "Audio '%.0fs' exceeds ForcedAligner recommended limit (180s). "
-                    "Timestamps may be less accurate for long files.",
-                    audio_duration,
-                )
+        if is_chunked:
+            logger.info("Audio split into %d scene(s) for Qwen3-ASR", len(scenes))
 
-        try:
-            results = qwen_model.transcribe(
-                audio=[audio_path],
-                language=[qwen_language] if qwen_language else None,
-                return_time_stamps=True,
+        all_texts: list[str] = []
+        all_timestamps: list[object] = []
+
+        for i, (scene_path, scene_offset) in enumerate(scenes):
+            if is_chunked:
+                logger.info("Transcribing scene %d/%d (offset %.1fs)", i + 1, len(scenes), scene_offset)
+
+            # Dynamic token budget per scene
+            scene_duration = get_audio_duration(scene_path)
+            original_max_tokens = getattr(qwen_model, 'max_new_tokens', None)
+            if scene_duration > 0 and original_max_tokens:
+                dynamic_limit = compute_dynamic_token_limit(scene_duration)
+                if dynamic_limit != original_max_tokens:
+                    qwen_model.max_new_tokens = dynamic_limit
+
+            try:
+                scene_results = qwen_model.transcribe(
+                    audio=[scene_path],
+                    language=[qwen_language] if qwen_language else None,
+                    return_time_stamps=True,
+                )
+            finally:
+                if original_max_tokens is not None:
+                    qwen_model.max_new_tokens = original_max_tokens
+
+            scene_output = scene_results[0]
+            scene_text = getattr(scene_output, "text", "") or ""
+
+            # Clean raw text before combining
+            if qwen_clean_text and scene_text:
+                from subgen.services.text_cleaner import clean_asr_text
+                cleaned = clean_asr_text(scene_text)
+                if cleaned != scene_text:
+                    logger.info(
+                        "Text cleaner scene %d: %d -> %d chars",
+                        i + 1, len(scene_text), len(cleaned),
+                    )
+                    scene_output.text = cleaned
+                    scene_text = cleaned
+
+            all_texts.append(scene_text)
+
+            # Collect timestamps with offset applied
+            raw_stamps = getattr(scene_output, "time_stamps", None)
+            if raw_stamps and scene_offset > 0:
+                for ts in raw_stamps:
+                    if hasattr(ts, 'start_time'):
+                        ts.start_time = float(ts.start_time) + scene_offset
+                    if hasattr(ts, 'end_time'):
+                        ts.end_time = float(ts.end_time) + scene_offset
+            if raw_stamps:
+                all_timestamps.extend(raw_stamps)
+
+        # Build combined result
+        if is_chunked and all_timestamps:
+            # Create a synthetic combined output for the adapter
+            class _CombinedQwenOutput:
+                def __init__(self, text: str, time_stamps: list, lang: str):
+                    self.text = text
+                    self.time_stamps = time_stamps
+                    self.language = lang
+
+            combined_text = " ".join(all_texts)
+            detected_lang = getattr(scenes and scene_results[0], "language", None) or language or "en"
+            combined = _CombinedQwenOutput(combined_text, all_timestamps, detected_lang)
+            result = qwen_output_to_whisper_result(
+                combined,
+                language=language or detected_lang,
+                audio_path=audio_path,
             )
-        finally:
-            # Restore original max_new_tokens
-            if original_max_tokens is not None:
-                qwen_model.max_new_tokens = original_max_tokens
-
-        # Clean raw text before alignment reconstruction
-        raw_text = getattr(results[0], "text", "") or ""
-        from subgen.config import qwen_clean_text
-        if qwen_clean_text and raw_text:
-            from subgen.services.text_cleaner import clean_asr_text
-            cleaned = clean_asr_text(raw_text)
-            if cleaned != raw_text:
-                logger.info(
-                    "Text cleaner: %d -> %d chars (-%d removed)",
-                    len(raw_text), len(cleaned), len(raw_text) - len(cleaned),
-                )
-                results[0].text = cleaned
-
-        result = qwen_output_to_whisper_result(
-            results[0],
-            language=language or getattr(results[0], "language", "en") or "en",
-            audio_path=audio_path,
-        )
+        else:
+            result = qwen_output_to_whisper_result(
+                scene_results[0],
+                language=language or getattr(scene_results[0], "language", "en") or "en",
+                audio_path=audio_path,
+            )
 
         return result
     finally:
-        if cleanup_path and os.path.exists(cleanup_path):
-            os.unlink(cleanup_path)
+        _cleanup_scenes(scenes, audio_path, cleanup_path)
 
 
 # ---------------------------------------------------------------------------
