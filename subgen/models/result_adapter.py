@@ -301,16 +301,28 @@ def qwen_output_to_whisper_result(
                 "end": float(getattr(item, "end_time", 0.0)),
             })
 
-    # Fix zero-duration words: when start_time == end_time the aligner
-    # only produced point timestamps.  Estimate end from the next word's
-    # start, with a small default gap for the last word.
+    # Fix zero-duration words: the forced aligner often returns point
+    # timestamps where start_time == end_time.  Scan forward for the next
+    # word with a strictly later start_time so consecutive items that share
+    # the same timestamp all get a proper end (not another zero-duration).
     _DEFAULT_WORD_DUR = 0.3  # seconds
     for i, w in enumerate(word_timestamps):
         if w["end"] <= w["start"]:
-            if i + 1 < len(word_timestamps):
-                w["end"] = word_timestamps[i + 1]["start"]
+            next_start = None
+            for j in range(i + 1, len(word_timestamps)):
+                if word_timestamps[j]["start"] > w["start"]:
+                    next_start = word_timestamps[j]["start"]
+                    break
+            if next_start is not None:
+                w["end"] = next_start
             else:
                 w["end"] = w["start"] + _DEFAULT_WORD_DUR
+
+    # Restore punctuation and capitalization from the full text onto the
+    # bare word timestamps.  Without this, _group_words_into_segments
+    # cannot detect sentence boundaries (.!?) and creates oversized
+    # segments that diarization later chops into tiny fragments.
+    _restore_punctuation_from_text(full_text, word_timestamps)
 
     if not word_timestamps:
         logger.warning(
