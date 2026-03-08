@@ -30,3 +30,4 @@ lmdb
 peft
 transformers
 safetensors
+auditok
