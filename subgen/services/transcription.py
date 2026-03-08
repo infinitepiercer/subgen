@@ -368,16 +368,21 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
 
             all_texts.append(scene_text)
 
-            # Collect timestamps with offset applied
+            # Collect timestamps with offset applied.
+            # ForcedAlignItem is a frozen dataclass, so we create simple
+            # wrapper objects with the offset baked in.
             raw_stamps = getattr(scene_output, "time_stamps", None)
-            if raw_stamps and scene_offset > 0:
-                for ts in raw_stamps:
-                    if hasattr(ts, 'start_time'):
-                        ts.start_time = float(ts.start_time) + scene_offset
-                    if hasattr(ts, 'end_time'):
-                        ts.end_time = float(ts.end_time) + scene_offset
             if raw_stamps:
-                all_timestamps.extend(raw_stamps)
+                if scene_offset > 0:
+                    class _OffsetStamp:
+                        __slots__ = ("text", "start_time", "end_time")
+                        def __init__(self, ts: object, offset: float):
+                            self.text = getattr(ts, "text", "")
+                            self.start_time = float(getattr(ts, "start_time", 0.0)) + offset
+                            self.end_time = float(getattr(ts, "end_time", 0.0)) + offset
+                    all_timestamps.extend(_OffsetStamp(ts, scene_offset) for ts in raw_stamps)
+                else:
+                    all_timestamps.extend(raw_stamps)
 
         # Build combined result
         if is_chunked and all_timestamps:
