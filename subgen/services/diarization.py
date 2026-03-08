@@ -9,8 +9,18 @@ output segment belongs to exactly one speaker.
 import logging
 import os
 import tempfile
+import warnings
 import wave
 from typing import List, Tuple, Union
+
+# Suppress sklearn FutureWarning about 'force_all_finite' renamed to
+# 'ensure_all_finite' (triggered by HDBSCAN/UMAP during clustering).
+warnings.filterwarnings(
+    "ignore",
+    message=".*force_all_finite.*",
+    category=FutureWarning,
+    module=r"sklearn\..*",
+)
 
 from subgen.config import enable_diarization  # noqa: F401 — imported for caller convenience
 from subgen.models import diarization_model as diarization_model_module
@@ -223,6 +233,8 @@ def _split_multi_speaker_segments(result: object, diar_segments: List[DiarSegmen
             len(unique_speakers),
         )
 
+    # Sort by start time to prevent out-of-order subtitles after splitting
+    new_segments.sort(key=lambda seg: seg.start)
     result.segments = new_segments
 
 
