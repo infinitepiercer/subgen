@@ -49,10 +49,10 @@ WORKDIR /subgen
 # Runtime system packages (rarely changes)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg curl gosu tzdata libsndfile1 || \
+    ffmpeg curl gosu tzdata libsndfile1 libportaudio2 || \
     (apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
-    ffmpeg curl gosu tzdata libsndfile1) && \
+    ffmpeg curl gosu tzdata libsndfile1 libportaudio2) && \
     rm -rf /var/lib/apt/lists/*
 
 # Python packages from builder (only re-copied when deps change)
