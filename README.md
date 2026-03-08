@@ -287,7 +287,7 @@ See the [community guide](https://github.com/McCloudS/subgen/discussions/137) fo
 
 ## Credits
 
-- [WhisperJAV](https://github.com/yourusername/WhisperJAV) — Scene detection, timestamp hardening, regroup tuning, and alignment sentinel strategies ported from this project
+- [WhisperJAV](https://github.com/meizhong986/WhisperJAV) — Scene detection, timestamp hardening, regroup tuning, and alignment sentinel strategies ported from this project
 - [OpenAI Whisper](https://github.com/openai/whisper)
 - [faster-whisper](https://github.com/guillaumekln/faster-whisper)
 - [stable-ts](https://github.com/jianfch/stable-ts)
