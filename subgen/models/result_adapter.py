@@ -280,8 +280,8 @@ def qwen_output_to_whisper_result(
         Expected attributes:
           - ``.text``  -- full transcription string
           - ``.language``  -- detected language
-          - ``.time_stamps``  -- list of lists of word-level timestamp objects,
-            each with ``.text``, ``.start_time``, ``.end_time``.
+          - ``.time_stamps``  -- ``ForcedAlignResult`` iterable of
+            ``ForcedAlignItem(text, start_time, end_time)`` objects.
     language:
         ISO 639-1 language code to store in the result (default ``"en"``).
     """
@@ -290,23 +290,27 @@ def qwen_output_to_whisper_result(
     full_text: str = getattr(qwen_output, "text", "") or ""
     raw_stamps = getattr(qwen_output, "time_stamps", None)
 
-    # Flatten nested timestamp lists (Qwen returns list-of-lists).
+    # ForcedAlignResult is a flat iterable of ForcedAlignItem objects,
+    # each with .text, .start_time, .end_time attributes.
     word_timestamps: List[Dict[str, Any]] = []
     if raw_stamps:
         for item in raw_stamps:
-            if isinstance(item, list):
-                for w in item:
-                    word_timestamps.append({
-                        "word": getattr(w, "text", str(w)),
-                        "start": float(getattr(w, "start_time", 0.0)),
-                        "end": float(getattr(w, "end_time", 0.0)),
-                    })
-            elif hasattr(item, "text"):
-                word_timestamps.append({
-                    "word": item.text,
-                    "start": float(getattr(item, "start_time", 0.0)),
-                    "end": float(getattr(item, "end_time", 0.0)),
-                })
+            word_timestamps.append({
+                "word": getattr(item, "text", str(item)),
+                "start": float(getattr(item, "start_time", 0.0)),
+                "end": float(getattr(item, "end_time", 0.0)),
+            })
+
+    # Fix zero-duration words: when start_time == end_time the aligner
+    # only produced point timestamps.  Estimate end from the next word's
+    # start, with a small default gap for the last word.
+    _DEFAULT_WORD_DUR = 0.3  # seconds
+    for i, w in enumerate(word_timestamps):
+        if w["end"] <= w["start"]:
+            if i + 1 < len(word_timestamps):
+                w["end"] = word_timestamps[i + 1]["start"]
+            else:
+                w["end"] = w["start"] + _DEFAULT_WORD_DUR
 
     if not word_timestamps:
         logger.warning(

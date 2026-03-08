@@ -414,27 +414,9 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
             return_time_stamps=True,
         )
 
-        # Debug: dump raw Qwen output to understand its structure
-        r0 = results[0]
-        logger.info("Qwen raw output attributes: %s", [a for a in dir(r0) if not a.startswith('_')])
-        logger.info("Qwen text (first 200 chars): %s", (getattr(r0, 'text', '') or '')[:200])
-        raw_ts = getattr(r0, 'time_stamps', None)
-        if raw_ts:
-            logger.info("Qwen time_stamps type=%s, len=%s", type(raw_ts).__name__, len(raw_ts))
-            if raw_ts:
-                first = raw_ts[0]
-                logger.info("  time_stamps[0] type=%s, value=%s", type(first).__name__, repr(first)[:300])
-                if isinstance(first, list) and first:
-                    logger.info("  time_stamps[0][0] type=%s, attrs=%s", type(first[0]).__name__, [a for a in dir(first[0]) if not a.startswith('_')][:20])
-                    logger.info("  time_stamps[0][0] repr=%s", repr(first[0])[:200])
-                elif hasattr(first, 'text'):
-                    logger.info("  time_stamps[0] .text=%s .start_time=%s .end_time=%s", first.text, getattr(first, 'start_time', '?'), getattr(first, 'end_time', '?'))
-        else:
-            logger.warning("Qwen time_stamps is None or empty!")
-
         result = qwen_output_to_whisper_result(
             results[0],
-            language=language or getattr(r0, "language", "en") or "en",
+            language=language or getattr(results[0], "language", "en") or "en",
         )
 
         return result
