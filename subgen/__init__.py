@@ -1,1 +1,1 @@
-subgen_version = '2026.03.66'
+subgen_version = '2026.03.67'

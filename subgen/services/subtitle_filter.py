@@ -3,14 +3,73 @@
 Removes hallucinated and junk segments that Whisper sometimes generates
 during silence.  Enabled via ``FILTER_SUBTITLES=true``.
 
-All filtering is based on Whisper's own confidence scores
-(``no_speech_prob``, ``avg_logprob``, ``compression_ratio``) rather than
-hardcoded word/phrase lists, so legitimate speech is never suppressed.
+Confidence-based filtering uses Whisper's own scores (``no_speech_prob``,
+``avg_logprob``, ``compression_ratio``).
+
+Non-verbal filtering (enabled via ``DROP_NONVERBAL_SEGMENTS=true``)
+detects music cues, sound effects, laughs, moans, and other non-speech
+segments via keyword matching and simple vocal detection.
 """
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Non-verbal segment detection (ported from WhisperJAV SegmentFilterHelper)
+# ---------------------------------------------------------------------------
+
+_NONVERBAL_KEYWORDS: set[str] = {
+    "music", "applause", "laugh", "laughs", "laughter",
+    "sfx", "fx", "noise", "silence", "ambient",
+    "moan", "moans", "moaning", "groan", "groans",
+    "sigh", "sighs", "breath", "breathing",
+}
+
+_NOTE_CHARACTERS: set[str] = set("♪♫")
+
+_SIMPLE_VOCAL_CHARSET: set[str] = set("ahmnou")
+
+_SIMPLE_VOCAL_IGNORES: set[str] = set("!?,.~... ")
+
+_SIMPLE_VOCAL_MAX_LENGTH: int = 6
+
+
+def _looks_nonverbal(text: str) -> bool:
+    """Return True if the segment text appears to be non-verbal content."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    # Pure note characters or punctuation
+    if all(ch in _NOTE_CHARACTERS or ch in _SIMPLE_VOCAL_IGNORES for ch in stripped):
+        return True
+
+    lowered = stripped.lower()
+
+    # Strip bracket descriptors like [music] or (laughs)
+    collapsed = lowered.strip()
+    while collapsed and collapsed[0] in "[](){}<>":
+        collapsed = collapsed[1:]
+    while collapsed and collapsed[-1] in "[](){}<>":
+        collapsed = collapsed[:-1]
+    collapsed = collapsed.strip()
+
+    if not collapsed:
+        return False
+
+    # Keyword matching
+    for keyword in _NONVERBAL_KEYWORDS:
+        if keyword in collapsed:
+            return True
+
+    # Simple vocal detection (short moans/grunts like "ahh", "mmm")
+    simplified = "".join(ch for ch in collapsed if ch not in _SIMPLE_VOCAL_IGNORES)
+    if simplified and len(simplified) <= _SIMPLE_VOCAL_MAX_LENGTH:
+        if all(ch in _SIMPLE_VOCAL_CHARSET for ch in simplified):
+            return True
+
+    return False
 
 # ---------------------------------------------------------------------------
 # Confidence thresholds for detecting hallucinated segments.
@@ -127,5 +186,11 @@ def _check_segment(seg, text: str) -> str | None:
         and compression_ratio > _COMPRESSION_RATIO_THRESHOLD
     ):
         return f"high_compression_ratio:{compression_ratio:.2f}"
+
+    # --- Non-verbal segment detection ---
+    # Filters music cues, sound effects, laughs, moans, etc.
+    from subgen.config import drop_nonverbal_segments
+    if drop_nonverbal_segments and _looks_nonverbal(text):
+        return "nonverbal"
 
     return None

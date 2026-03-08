@@ -20,6 +20,9 @@ from subgen.config import (
     qwen_aligner_model as _qwen_aligner_model,
     qwen_max_new_tokens as _qwen_max_new_tokens,
     qwen_model_name as _qwen_model_name,
+    qwen_repetition_penalty as _qwen_repetition_penalty,
+    qwen_max_tokens_per_second as _qwen_max_tokens_per_second,
+    qwen_min_tokens_floor as _qwen_min_tokens_floor,
     transcribe_device,
     clear_vram_on_complete,
     model_cleanup_delay,
@@ -100,7 +103,51 @@ def start_model() -> None:
                 forced_aligner_kwargs=aligner_kwargs,
             )
 
+            _apply_repetition_penalty()
             logger.info("Qwen ASR model loaded successfully")
+
+
+def _apply_repetition_penalty() -> None:
+    """Apply repetition_penalty to the thinker's HF GenerationConfig.
+
+    Prevents degenerate token spam from autoregressive loops.
+    Access chain: model.model.thinker.generation_config (verified for qwen-asr).
+    """
+    if _qwen_repetition_penalty == 1.0:
+        return
+
+    try:
+        gen_config = model.model.thinker.generation_config
+        gen_config.repetition_penalty = _qwen_repetition_penalty
+        logger.info(
+            "Generation safety: repetition_penalty=%.2f applied to thinker",
+            _qwen_repetition_penalty,
+        )
+    except AttributeError as exc:
+        logger.warning(
+            "Could not apply repetition_penalty — qwen-asr model structure "
+            "may have changed: %s. Generation will proceed without penalty.",
+            exc,
+        )
+
+
+def compute_dynamic_token_limit(audio_duration_sec: float) -> int:
+    """Compute a dynamic max_new_tokens limit scaled to audio duration.
+
+    When QWEN_MAX_TOKENS_PER_SECOND > 0, the token budget is proportional
+    to the audio length instead of a fixed value. This caps damage from
+    degenerate autoregressive loops: a 10-second clip gets ~200 tokens
+    instead of burning through 4096.
+
+    The result is clamped to [min_tokens_floor, max_new_tokens].
+    """
+    if _qwen_max_tokens_per_second <= 0 or audio_duration_sec <= 0:
+        return _qwen_max_new_tokens
+    dynamic = max(
+        _qwen_min_tokens_floor,
+        int(audio_duration_sec * _qwen_max_tokens_per_second),
+    )
+    return min(dynamic, _qwen_max_new_tokens)
 
 
 def schedule_model_cleanup() -> None:

@@ -365,7 +365,7 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
     import tempfile
     import wave
 
-    from subgen.models.qwen_model import model as qwen_model
+    from subgen.models.qwen_model import model as qwen_model, compute_dynamic_token_limit
     from subgen.models.result_adapter import qwen_output_to_whisper_result
 
     cleanup_path: str | None = None
@@ -408,11 +408,49 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
 
         logger.info("Transcribing with Qwen3-ASR (language=%s)", qwen_language or "auto-detect")
 
-        results = qwen_model.transcribe(
-            audio=[audio_path],
-            language=[qwen_language] if qwen_language else None,
-            return_time_stamps=True,
-        )
+        # Dynamic token budget: scale max_new_tokens to audio duration
+        audio_duration = _get_audio_duration(audio_path)
+        original_max_tokens = getattr(qwen_model, 'max_new_tokens', None)
+        if audio_duration > 0:
+            dynamic_limit = compute_dynamic_token_limit(audio_duration)
+            if original_max_tokens and dynamic_limit != original_max_tokens:
+                qwen_model.max_new_tokens = dynamic_limit
+                logger.info(
+                    "Dynamic token budget: %d tokens for %.0fs audio (was %d)",
+                    dynamic_limit, audio_duration, original_max_tokens,
+                )
+
+            # Pre-flight audio limit check
+            if audio_duration > 180:
+                logger.warning(
+                    "Audio '%.0fs' exceeds ForcedAligner recommended limit (180s). "
+                    "Timestamps may be less accurate for long files.",
+                    audio_duration,
+                )
+
+        try:
+            results = qwen_model.transcribe(
+                audio=[audio_path],
+                language=[qwen_language] if qwen_language else None,
+                return_time_stamps=True,
+            )
+        finally:
+            # Restore original max_new_tokens
+            if original_max_tokens is not None:
+                qwen_model.max_new_tokens = original_max_tokens
+
+        # Clean raw text before alignment reconstruction
+        raw_text = getattr(results[0], "text", "") or ""
+        from subgen.config import qwen_clean_text
+        if qwen_clean_text and raw_text:
+            from subgen.services.text_cleaner import clean_asr_text
+            cleaned = clean_asr_text(raw_text)
+            if cleaned != raw_text:
+                logger.info(
+                    "Text cleaner: %d -> %d chars (-%d removed)",
+                    len(raw_text), len(cleaned), len(raw_text) - len(cleaned),
+                )
+                results[0].text = cleaned
 
         result = qwen_output_to_whisper_result(
             results[0],

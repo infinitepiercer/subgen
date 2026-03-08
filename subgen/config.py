@@ -53,6 +53,11 @@ boost_words: str = os.getenv('BOOST_WORDS', '')
 qwen_model_name: str = os.getenv('QWEN_MODEL', 'Qwen/Qwen3-ASR-1.7B')
 qwen_aligner_model: str = os.getenv('QWEN_ALIGNER_MODEL', 'Qwen/Qwen3-ForcedAligner-0.6B')
 qwen_max_new_tokens: int = int(os.getenv('QWEN_MAX_NEW_TOKENS', '4096'))
+qwen_repetition_penalty: float = float(os.getenv('QWEN_REPETITION_PENALTY', '1.1'))
+qwen_max_tokens_per_second: float = float(os.getenv('QWEN_MAX_TOKENS_PER_SECOND', '20.0'))
+qwen_min_tokens_floor: int = int(os.getenv('QWEN_MIN_TOKENS_FLOOR', '256'))
+qwen_clean_text: bool = convert_to_bool(os.getenv('QWEN_CLEAN_TEXT', True))
+drop_nonverbal_segments: bool = convert_to_bool(os.getenv('DROP_NONVERBAL_SEGMENTS', False))
 
 # ---------------------------------------------------------------------------
 # Whisper Configuration
