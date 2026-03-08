@@ -1,4 +1,4 @@
-"""Adapter to convert NVIDIA Parakeet (NeMo) ASR output into a stable_whisper.WhisperResult.
+"""Adapter to convert ASR output (Parakeet / Qwen3-ASR) into a stable_whisper.WhisperResult.
 
 The Parakeet model returns a dataclass-like object with:
   - ``output.text``  -- full transcription string
@@ -8,11 +8,17 @@ This module groups those word timestamps into sentence-level segments and
 constructs a genuine ``stable_whisper.WhisperResult`` so the entire
 downstream pipeline (diarization, subtitle filter, translation, SRT output)
 works without modification.
+
+Post-alignment hardening pipeline (ported from WhisperJAV hardening.py):
+  - VAD-guided collapse recovery — distributes words within speech regions
+  - Null/failed timestamp interpolation — fills gaps between valid anchors
+  - Boundary clamping — prevents timestamps from exceeding audio duration
+  - Chronological sorting — ensures strict time ordering after recovery
 """
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import stable_whisper
 
@@ -301,13 +307,30 @@ def parakeet_output_to_whisper_result(
     if audio_duration <= 0 and final_words:
         audio_duration = max(w["end"] for w in final_words)
 
+    # Import VAD speech regions for collapse recovery (Strategy B).
+    from subgen.media.scene_detection import get_speech_regions
+    speech_regions_list = get_speech_regions()
+    vad_regions: Optional[List[Tuple[float, float]]] = None
+    if speech_regions_list:
+        vad_regions = [(r.start, r.end) for r in speech_regions_list]
+
+    collapsed = False
     quality = _assess_alignment_quality(final_words, audio_duration)
     if quality["status"] == "COLLAPSED":
-        logger.warning("Parakeet: applying proportional redistribution due to alignment collapse")
-        final_words = _redistribute_collapsed_words(final_words, audio_duration)
+        logger.warning("Parakeet: applying redistribution due to alignment collapse")
+        final_words = _redistribute_collapsed_words(
+            final_words, audio_duration, speech_regions=vad_regions,
+        )
+        collapsed = True
+
+    # Apply hardening pipeline: interpolation → clamping → sorting.
+    final_words = _harden_words(final_words, audio_duration)
 
     # Use stable_whisper.transcribe_any() for proper segment reconstruction
     # when audio_path is available.
+    # suppress_silence=False for sentinel-recovered words to preserve the
+    # recovery's timestamp distribution (JAV convention).
+    use_suppress_silence = not collapsed
     if audio_path:
         _precomputed_words = list(final_words)
 
@@ -319,11 +342,11 @@ def parakeet_output_to_whisper_result(
                 inference_func=precomputed_inference,
                 audio=str(audio_path),
                 audio_type="str",
-                regroup=True,
+                regroup=False,
                 vad=False,
                 demucs=False,
-                suppress_silence=True,
-                suppress_word_ts=True,
+                suppress_silence=use_suppress_silence,
+                suppress_word_ts=use_suppress_silence,
                 force_order=True,
                 verbose=False,
             )
@@ -457,11 +480,13 @@ def _assess_alignment_quality(
     if not word_dicts or audio_duration <= 0:
         return {"status": "OK", "details": "no words or no audio duration"}
 
+    total_chars = sum(len(w["word"].strip()) for w in word_dicts)
+    if total_chars <= 10:
+        return {"status": "OK", "details": "text too short for reliable assessment"}
+
     first_start = min(w["start"] for w in word_dicts)
     last_end = max(w["end"] for w in word_dicts)
     word_span = last_end - first_start
-
-    total_chars = sum(len(w["word"].strip()) for w in word_dicts)
     cps = total_chars / word_span if word_span > 0 else float("inf")
     coverage = word_span / audio_duration if audio_duration > 0 else 0.0
 
@@ -490,13 +515,22 @@ def _assess_alignment_quality(
 
 
 def _redistribute_collapsed_words(
-    word_dicts: List[Dict[str, Any]], audio_duration: float,
+    word_dicts: List[Dict[str, Any]],
+    audio_duration: float,
+    speech_regions: Optional[List[Tuple[float, float]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Proportionally redistribute words across the audio duration.
+    """Redistribute words across the audio duration after alignment collapse.
 
-    Used when the ForcedAligner has collapsed all words into a tiny time window.
-    Each word gets a duration proportional to its character count, with a
-    minimum of 20ms per word.
+    Supports two strategies:
+
+    - **Strategy A** (proportional): Distributes words evenly across the full
+      audio duration, proportional to character count.  Used as fallback when
+      no VAD speech regions are available.
+    - **Strategy B** (VAD-guided): Clips *speech_regions* to the redistribution
+      window and distributes words only within speech portions, skipping
+      silence gaps.  Words land on actual speech, not silence.
+
+    Each word receives a minimum duration of 20ms regardless of strategy.
 
     Parameters
     ----------
@@ -504,6 +538,9 @@ def _redistribute_collapsed_words(
         List of ``{'word': str, 'start': float, 'end': float}`` dicts.
     audio_duration:
         Total audio duration in seconds.
+    speech_regions:
+        Optional VAD speech regions as ``[(start, end), ...]``, sorted by
+        start time.  When provided, Strategy B (VAD-guided) is used.
 
     Returns
     -------
@@ -517,11 +554,54 @@ def _redistribute_collapsed_words(
     char_counts = [max(len(w["word"].strip()), 1) for w in word_dicts]
     total_chars = sum(char_counts)
 
-    # Reserve minimum duration for each word, distribute the rest proportionally
+    # Strategy B: VAD-guided distribution
+    if speech_regions:
+        clipped = _clip_speech_regions(speech_regions, 0.0, audio_duration)
+        total_speech_dur = sum(end - start for start, end in clipped)
+
+        if clipped and total_speech_dur > 0:
+            redistributed: List[Dict[str, Any]] = []
+            cumulative_chars = 0
+
+            for word_dict, chars in zip(word_dicts, char_counts):
+                frac_start = cumulative_chars / total_chars
+                frac_end = (cumulative_chars + chars) / total_chars
+
+                timeline_start = frac_start * total_speech_dur
+                timeline_end = frac_end * total_speech_dur
+
+                real_start = _timeline_to_real(timeline_start, clipped)
+                real_end = _timeline_to_real(timeline_end, clipped)
+
+                # Enforce minimum word duration
+                if real_end - real_start < _MIN_WORD_DURATION:
+                    real_end = real_start + _MIN_WORD_DURATION
+
+                redistributed.append({
+                    "word": word_dict["word"],
+                    "start": round(real_start, 3),
+                    "end": round(real_end, 3),
+                })
+                cumulative_chars += chars
+
+            logger.info(
+                "Redistributed %d words across %d speech regions "
+                "(%.2fs speech in %.2fs audio, VAD-guided)",
+                len(redistributed), len(clipped), total_speech_dur, audio_duration,
+            )
+            return redistributed
+
+        # No usable speech regions — fall through to Strategy A
+        logger.debug(
+            "No usable speech regions after clipping; "
+            "falling back to proportional redistribution"
+        )
+
+    # Strategy A: proportional distribution across full audio duration
     min_total = _MIN_WORD_DURATION * len(word_dicts)
     available = max(audio_duration - min_total, 0.0)
 
-    redistributed: List[Dict[str, Any]] = []
+    redistributed = []
     cursor = 0.0
 
     for word_dict, chars in zip(word_dicts, char_counts):
@@ -539,6 +619,366 @@ def _redistribute_collapsed_words(
         len(redistributed), audio_duration,
     )
     return redistributed
+
+
+# ---------------------------------------------------------------------------
+# Hardening helpers: speech region clipping and timeline mapping
+# ---------------------------------------------------------------------------
+
+
+def _clip_speech_regions(
+    regions: List[Tuple[float, float]],
+    window_start: float,
+    window_end: float,
+) -> List[Tuple[float, float]]:
+    """Clip speech regions to a time window, returning only overlapping portions.
+
+    Parameters
+    ----------
+    regions:
+        VAD speech regions as ``[(start, end), ...]``.
+    window_start:
+        Start of the clipping window in seconds.
+    window_end:
+        End of the clipping window in seconds.
+
+    Returns
+    -------
+    List of ``(start, end)`` tuples clipped to ``[window_start, window_end]``,
+    filtered to only include regions with positive duration.
+    """
+    clipped: List[Tuple[float, float]] = []
+    for region_start, region_end in regions:
+        cs = max(region_start, window_start)
+        ce = min(region_end, window_end)
+        if ce > cs:
+            clipped.append((cs, ce))
+    return clipped
+
+
+def _timeline_to_real(
+    timeline_pos: float,
+    regions: List[Tuple[float, float]],
+) -> float:
+    """Map a position in the flattened speech timeline to real time.
+
+    The "speech timeline" is a continuous axis from 0 to ``total_speech_dur``
+    (sum of all region durations).  This function maps a position on that
+    axis back to real time, accounting for silence gaps between regions.
+
+    Parameters
+    ----------
+    timeline_pos:
+        Position in the flattened speech timeline (seconds).
+    regions:
+        Sorted list of ``(start_sec, end_sec)`` speech regions.
+
+    Returns
+    -------
+    Real time in seconds.
+    """
+    cumulative = 0.0
+
+    for region_start, region_end in regions:
+        region_dur = region_end - region_start
+        if region_dur <= 0:
+            continue
+
+        if cumulative + region_dur >= timeline_pos:
+            offset_in_region = timeline_pos - cumulative
+            return region_start + offset_in_region
+
+        cumulative += region_dur
+
+    # Past the end of all regions — clamp to last region end
+    if regions:
+        return regions[-1][1]
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Hardening: null/failed timestamp interpolation
+# ---------------------------------------------------------------------------
+
+
+def _interpolate_null_timestamps(
+    words: List[Dict[str, Any]],
+    audio_duration: float,
+) -> int:
+    """Interpolate timestamps for words where the aligner returned null/zero values.
+
+    Finds words with ``start == 0.0 and end == 0.0`` (aligner failure signature)
+    that are surrounded by valid anchor words.  Distributes null-timestamp words
+    proportionally by character count between the nearest valid anchors.
+
+    Edge cases:
+      - Leading nulls (before first anchor): distribute from 0.0 to first anchor
+      - Trailing nulls (after last anchor): estimate from character count,
+        capped to *audio_duration*
+      - All nulls: return 0 (cannot interpolate without anchors)
+
+    Parameters
+    ----------
+    words:
+        List of ``{'word': str, 'start': float, 'end': float}`` dicts.
+        Modified in place.
+    audio_duration:
+        Total audio duration in seconds; used to cap trailing estimates.
+
+    Returns
+    -------
+    Number of words that received interpolated timestamps.
+    """
+    if not words:
+        return 0
+
+    # Identify anchor indices (words with valid timestamps: end > 0)
+    anchors: List[int] = [
+        i for i, w in enumerate(words)
+        if w["end"] > 0.0
+    ]
+
+    if not anchors:
+        return 0
+
+    interpolated_count = 0
+
+    def _interpolate_gap(
+        gap_indices: List[int], start_time: float, end_time: float,
+    ) -> None:
+        """Distribute words in gap_indices proportionally by char count."""
+        nonlocal interpolated_count
+        if not gap_indices:
+            return
+
+        total_chars = sum(max(len(words[i]["word"].strip()), 1) for i in gap_indices)
+        gap_duration = end_time - start_time
+        if gap_duration <= 0:
+            gap_duration = 0.5 * len(gap_indices)
+
+        current_time = start_time
+        for idx in gap_indices:
+            word_chars = max(len(words[idx]["word"].strip()), 1)
+            word_duration = gap_duration * (word_chars / total_chars)
+            words[idx]["start"] = round(current_time, 3)
+            words[idx]["end"] = round(current_time + word_duration, 3)
+            current_time += word_duration
+            interpolated_count += 1
+
+    # Leading gap: words before first anchor
+    if anchors[0] > 0:
+        leading_indices = [
+            i for i in range(0, anchors[0])
+            if words[i]["start"] == 0.0 and words[i]["end"] == 0.0
+        ]
+        if leading_indices:
+            _interpolate_gap(leading_indices, 0.0, words[anchors[0]]["start"])
+
+    # Gaps between anchors
+    for k in range(len(anchors) - 1):
+        prev_anchor = anchors[k]
+        next_anchor = anchors[k + 1]
+
+        gap_indices = [
+            i for i in range(prev_anchor + 1, next_anchor)
+            if words[i]["start"] == 0.0 and words[i]["end"] == 0.0
+        ]
+        if gap_indices:
+            _interpolate_gap(
+                gap_indices,
+                words[prev_anchor]["end"],
+                words[next_anchor]["start"],
+            )
+
+    # Trailing gap: words after last anchor
+    last_anchor = anchors[-1]
+    if last_anchor < len(words) - 1:
+        trailing_indices = [
+            i for i in range(last_anchor + 1, len(words))
+            if words[i]["start"] == 0.0 and words[i]["end"] == 0.0
+        ]
+        if trailing_indices:
+            trailing_start = words[last_anchor]["end"]
+            # Estimate duration: ~50ms per character (conservative)
+            total_trailing_chars = sum(
+                max(len(words[i]["word"].strip()), 1) for i in trailing_indices
+            )
+            estimated_duration = max(0.5, total_trailing_chars * 0.05)
+
+            # Cap to audio_duration
+            if audio_duration > 0:
+                max_trailing = max(0.0, audio_duration - trailing_start)
+                estimated_duration = min(estimated_duration, max(0.1, max_trailing))
+
+            _interpolate_gap(
+                trailing_indices,
+                trailing_start,
+                trailing_start + estimated_duration,
+            )
+
+    if interpolated_count > 0:
+        logger.info(
+            "Interpolated timestamps for %d words with null aligner output",
+            interpolated_count,
+        )
+
+    return interpolated_count
+
+
+# ---------------------------------------------------------------------------
+# Hardening: timestamp clamping
+# ---------------------------------------------------------------------------
+
+
+def _clamp_timestamps(
+    words: List[Dict[str, Any]],
+    max_duration: float,
+) -> int:
+    """Clamp all word timestamps to ``[0, max_duration]``.
+
+    Prevents aligner drift or interpolation overflow from producing timestamps
+    that exceed the audio boundary, which causes out-of-order warnings and
+    display artifacts in subtitle renderers.
+
+    Ensures ``word['end'] >= word['start']`` after clamping.
+
+    Parameters
+    ----------
+    words:
+        List of ``{'word': str, 'start': float, 'end': float}`` dicts.
+        Modified in place.
+    max_duration:
+        Maximum allowed timestamp value (audio duration in seconds).
+
+    Returns
+    -------
+    Number of words whose timestamps were adjusted.
+    """
+    if not words or max_duration <= 0:
+        return 0
+
+    clamped_count = 0
+
+    for word in words:
+        original_start = word["start"]
+        original_end = word["end"]
+
+        new_start = max(0.0, min(word["start"], max_duration))
+        new_end = max(new_start, min(word["end"], max_duration))
+
+        if new_start != original_start or new_end != original_end:
+            clamped_count += 1
+
+        word["start"] = round(new_start, 3)
+        word["end"] = round(new_end, 3)
+
+    if clamped_count > 0:
+        logger.debug(
+            "Clamped %d word timestamps to [0, %.2f]",
+            clamped_count, max_duration,
+        )
+
+    return clamped_count
+
+
+# ---------------------------------------------------------------------------
+# Hardening: chronological sorting
+# ---------------------------------------------------------------------------
+
+
+def _word_sort_key(word: Dict[str, Any]) -> Tuple[float, float]:
+    return (word["start"], word["end"])
+
+
+def _sort_words_chronologically(
+    words: List[Dict[str, Any]],
+) -> bool:
+    """Sort words by start time, breaking ties by end time.
+
+    Defensive safety net after timestamp interpolation and collapse recovery,
+    which can produce out-of-order words.
+
+    Parameters
+    ----------
+    words:
+        List of ``{'word': str, 'start': float, 'end': float}`` dicts.
+        Sorted in place.
+
+    Returns
+    -------
+    ``True`` if any words were reordered, ``False`` if already sorted.
+    """
+    if not words or len(words) <= 1:
+        return False
+
+    starts_before = [(w["start"], w["end"]) for w in words]
+    words.sort(key=_word_sort_key)
+    starts_after = [(w["start"], w["end"]) for w in words]
+
+    reordered = starts_before != starts_after
+    if reordered:
+        logger.debug(
+            "Reordered %d words by chronological sort",
+            len(words),
+        )
+    return reordered
+
+
+# ---------------------------------------------------------------------------
+# Hardening pipeline orchestrator
+# ---------------------------------------------------------------------------
+
+
+def _harden_words(
+    words: List[Dict[str, Any]],
+    audio_duration: float,
+    speech_regions: Optional[List[Tuple[float, float]]] = None,
+) -> List[Dict[str, Any]]:
+    """Apply the full hardening pipeline to a word list.
+
+    Steps (applied in order):
+      1. **Null timestamp interpolation** — fill gaps between valid anchors
+      2. **Timestamp clamping** — bound to ``[0, audio_duration]``
+      3. **Chronological sorting** — ensure strict time ordering
+
+    This function is called after alignment quality assessment and collapse
+    recovery (if needed), so the words should already have reasonable
+    timestamps.  The hardening pipeline catches edge cases that slip through.
+
+    Parameters
+    ----------
+    words:
+        List of ``{'word': str, 'start': float, 'end': float}`` dicts.
+        Modified in place.
+    audio_duration:
+        Total audio duration in seconds.
+    speech_regions:
+        Optional VAD speech regions (currently unused by hardening steps but
+        reserved for future enhancements).
+
+    Returns
+    -------
+    The same word list, hardened in place (returned for chaining convenience).
+    """
+    if not words:
+        return words
+
+    # Step 1: Interpolate null/failed timestamps
+    interpolated = _interpolate_null_timestamps(words, audio_duration)
+
+    # Step 2: Clamp all timestamps to valid range
+    clamped = _clamp_timestamps(words, audio_duration)
+
+    # Step 3: Ensure chronological ordering
+    sorted_flag = _sort_words_chronologically(words)
+
+    if interpolated or clamped or sorted_flag:
+        logger.debug(
+            "Hardening pipeline: interpolated=%d, clamped=%d, reordered=%s",
+            interpolated, clamped, sorted_flag,
+        )
+
+    return words
 
 
 def qwen_output_to_whisper_result(
@@ -623,14 +1063,31 @@ def qwen_output_to_whisper_result(
         # Estimate from the last word's end time as fallback.
         audio_duration = max(w["end"] for w in final_words)
 
+    # Import VAD speech regions for collapse recovery (Strategy B).
+    from subgen.media.scene_detection import get_speech_regions
+    speech_regions_list = get_speech_regions()
+    vad_regions: Optional[List[Tuple[float, float]]] = None
+    if speech_regions_list:
+        vad_regions = [(r.start, r.end) for r in speech_regions_list]
+
+    collapsed = False
     quality = _assess_alignment_quality(final_words, audio_duration)
     if quality["status"] == "COLLAPSED":
-        logger.warning("Applying proportional redistribution due to alignment collapse")
-        final_words = _redistribute_collapsed_words(final_words, audio_duration)
+        logger.warning("Applying redistribution due to alignment collapse")
+        final_words = _redistribute_collapsed_words(
+            final_words, audio_duration, speech_regions=vad_regions,
+        )
+        collapsed = True
+
+    # Apply hardening pipeline: interpolation → clamping → sorting.
+    final_words = _harden_words(final_words, audio_duration)
 
     # Use stable_whisper.transcribe_any() for proper segment reconstruction
     # when audio_path is available.  This gives us sentence splitting, gap
     # detection, character limits, and duration caps automatically.
+    # suppress_silence=False for sentinel-recovered words to preserve the
+    # recovery's timestamp distribution (JAV convention).
+    use_suppress_silence = not collapsed
     if audio_path:
         # Capture final_words in a closure for the precomputed inference function.
         _precomputed_words = list(final_words)
@@ -643,11 +1100,11 @@ def qwen_output_to_whisper_result(
                 inference_func=precomputed_inference,
                 audio=str(audio_path),
                 audio_type="str",
-                regroup=True,
+                regroup=False,
                 vad=False,
                 demucs=False,
-                suppress_silence=True,
-                suppress_word_ts=True,
+                suppress_silence=use_suppress_silence,
+                suppress_word_ts=use_suppress_silence,
                 force_order=True,
                 verbose=False,
             )

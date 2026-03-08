@@ -113,6 +113,15 @@ enable_diarization: bool = convert_to_bool(os.getenv('ENABLE_DIARIZATION', False
 diarization_model: str = os.getenv('DIARIZATION_MODEL', 'english')
 
 # ---------------------------------------------------------------------------
+# Scene Detection Configuration
+# ---------------------------------------------------------------------------
+max_scene_duration: float = float(os.getenv('MAX_SCENE_DURATION', '30'))
+use_silero_vad: bool = convert_to_bool(os.getenv('USE_SILERO_VAD', True))
+silero_vad_threshold: float = float(os.getenv('SILERO_VAD_THRESHOLD', '0.08'))
+silero_min_silence_ms: int = int(os.getenv('SILERO_MIN_SILENCE_MS', '1500'))
+silero_min_speech_ms: int = int(os.getenv('SILERO_MIN_SPEECH_MS', '100'))
+
+# ---------------------------------------------------------------------------
 # Skip Configuration - with backwards compatibility
 # ---------------------------------------------------------------------------
 skipifexternalsub: bool = get_env_with_fallback(

@@ -17,6 +17,7 @@ from subgen.config import (
     kwargs as whisper_kwargs,
     lrc_for_audio_files,
     limit_to_preferred_audio_languages,
+    max_scene_duration,
     min_subtitle_duration,
     namesublang,
     normalize_audio as normalize_audio_enabled,
@@ -58,6 +59,33 @@ from subgen.services.subtitle_filter import filter_segments
 logger = logging.getLogger(__name__)
 
 _UNEXPECTED_KWARG_RE = re.compile(r"got an unexpected keyword argument '(\w+)'")
+
+# ---------------------------------------------------------------------------
+# JAV-tuned regroup strategy (ported from WhisperJAV reconstruction.py)
+# ---------------------------------------------------------------------------
+# stable-ts uses '_' to chain regroup operations sequentially.
+# Default 'da' splits at any 0.5s gap, which fragments conversational
+# dialogue at natural thinking pauses.  JAV-tuned changes:
+#   isp:  ignore special periods (Mr., Dr.)
+#   cm:   clamp word timestamps to segment boundaries
+#   sp:   split at sentence-ending punctuation (. ? !)
+#   sg:   0.5 -> 1.5  Only split at 1.5s+ gaps (not every breath pause)
+#   mg:   merge fragments if gap < 1.5s AND combined < 80 chars
+#   sl:   split if segment > 80 chars
+#   sd=8  speech-time cap at 8 seconds
+#   cm:   final safety clamp
+#
+# After regrouping, enforce_wall_clock_cap() runs to catch segments whose
+# wall-clock span exceeds 8s (sd only caps speech time, not screen time).
+REGROUP_SUBGEN: str = (
+    "isp_cm"               # ignore special periods (Mr., Dr.) + initial clamp
+    "_sp=./?/!"            # split at sentence-ending punctuation
+    "_sg=1.5"              # split at 1.5s+ gaps (relaxed from default 0.5s)
+    "_mg=1.5++80+1"        # merge fragments: gap < 1.5s, combined < 80 chars
+    "_sl=80"               # split if segment > 80 chars
+    "_sd=8"                # max 8s speech time per subtitle
+    "_cm"                  # final safety clamp
+)
 
 # Regex for capitalizing first letter after sentence-ending punctuation
 _SENTENCE_START_RE = re.compile(r'(?:^|[.!?]\s+)([a-z])')
@@ -156,7 +184,7 @@ def _delete_model() -> None:
 # ---------------------------------------------------------------------------
 
 
-_MAX_SCENE_SECONDS: float = 180.0  # 3 minutes — matches ForcedAligner limit
+_MAX_SCENE_SECONDS: float = max_scene_duration  # from config (default 30s for speech-aligned scenes)
 
 
 def _ensure_audio_path(audio_data: object) -> tuple[str, str | None]:
@@ -292,8 +320,8 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
     Accepts audio as a file path (str), raw bytes, or a numpy array.
     Returns a WhisperResult-compatible object via the result adapter.
 
-    Long audio files are automatically split into scenes at silence
-    boundaries (180s max, matching ForcedAligner limit).
+    Long audio files are automatically split into scenes at speech/silence
+    boundaries (default 30s max via Silero VAD + auditok).
     """
     from subgen.config import qwen_clean_text
     from subgen.media.scene_detection import get_audio_duration, split_audio_scenes
@@ -741,33 +769,34 @@ def gen_subtitles(
         else:
             actual_task = transcribe_or_translate_param
 
-        # Strip pad from regroup string (stable-ts bug workaround)
+        # Determine the regroup string: user override or JAV-tuned default.
+        # Strip pad from custom regroup (stable-ts bug workaround).
         start_pad, end_pad = 0.0, 0.0
-        if custom_regroup and custom_regroup.lower() != "default":
-            cleaned_regroup, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
+        has_custom_regroup: bool = bool(custom_regroup and custom_regroup.lower() != "default")
+        if has_custom_regroup:
+            regroup_str, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
+        else:
+            regroup_str = REGROUP_SUBGEN
 
         if asr_engine == 'parakeet':
             result = _transcribe_parakeet(data, force_language.to_iso_639_1(), actual_task)
-            # Apply custom_regroup via stable-ts post-processing if requested
-            if custom_regroup and custom_regroup.lower() != "default":
-                cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
-                if cleaned_regroup_str and hasattr(result, 'regroup'):
-                    result.regroup(cleaned_regroup_str)
+            # Apply regroup via stable-ts post-processing
+            if regroup_str and hasattr(result, 'regroup'):
+                result.regroup(regroup_str)
         elif asr_engine == 'qwen':
             result = _transcribe_qwen(data, force_language.to_iso_639_1(), actual_task)
-            if custom_regroup and custom_regroup.lower() != "default":
-                cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
-                if cleaned_regroup_str and hasattr(result, 'regroup'):
-                    result.regroup(cleaned_regroup_str)
+            if regroup_str and hasattr(result, 'regroup'):
+                result.regroup(regroup_str)
         else:
             args = {}
             display_name = os.path.basename(file_path)
             args["progress_callback"] = ProgressHandler(display_name)
 
-            if custom_regroup and custom_regroup.lower() != "default":
-                cleaned_regroup_str, _, _ = strip_pad_from_regroup(custom_regroup)
-                if cleaned_regroup_str:
-                    args["regroup"] = cleaned_regroup_str
+            if regroup_str:
+                args["regroup"] = regroup_str
+            # suppress_silence refines segment boundaries based on silence
+            # detection, pulling subtitle start/end to actual speech edges.
+            args["suppress_silence"] = True
 
             args.update(whisper_kwargs)
 
@@ -782,6 +811,11 @@ def gen_subtitles(
                 verbose=None,
                 **args,
             )
+
+        # Wall-clock cap enforcement: split segments exceeding 8s screen time.
+        # stable-ts's sd= caps speech time, not wall-clock — this catches the rest.
+        from subgen.services.subtitle_constraints import enforce_wall_clock_cap
+        enforce_wall_clock_cap(result)
 
         appendLine(result)
         if filter_subtitles:
@@ -878,10 +912,14 @@ def asr_task_worker(task_data: dict) -> None:
             if normalized is not None:
                 file_content = normalized
 
-        # Strip pad from regroup string (stable-ts bug workaround)
+        # Determine the regroup string: user override or JAV-tuned default.
+        # Strip pad from custom regroup (stable-ts bug workaround).
         start_pad, end_pad = 0.0, 0.0
-        if custom_regroup and custom_regroup.lower() != "default":
-            cleaned_regroup, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
+        has_custom_regroup: bool = bool(custom_regroup and custom_regroup.lower() != "default")
+        if has_custom_regroup:
+            regroup_str, start_pad, end_pad = strip_pad_from_regroup(custom_regroup)
+        else:
+            regroup_str = REGROUP_SUBGEN
 
         if asr_engine == 'parakeet':
             # Prepare audio data for Parakeet
@@ -896,11 +934,9 @@ def asr_task_worker(task_data: dict) -> None:
                 )
 
             result = _transcribe_parakeet(audio_data, language, actual_task)
-            # Apply custom_regroup via stable-ts post-processing if requested
-            if custom_regroup and custom_regroup.lower() != "default":
-                cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
-                if cleaned_regroup_str and hasattr(result, 'regroup'):
-                    result.regroup(cleaned_regroup_str)
+            # Apply regroup via stable-ts post-processing
+            if regroup_str and hasattr(result, 'regroup'):
+                result.regroup(regroup_str)
         elif asr_engine == 'qwen':
             if encode:
                 audio_data = file_content
@@ -913,10 +949,8 @@ def asr_task_worker(task_data: dict) -> None:
                 )
 
             result = _transcribe_qwen(audio_data, language, actual_task)
-            if custom_regroup and custom_regroup.lower() != "default":
-                cleaned_regroup_str = strip_pad_from_regroup(custom_regroup)[0]
-                if cleaned_regroup_str and hasattr(result, 'regroup'):
-                    result.regroup(cleaned_regroup_str)
+            if regroup_str and hasattr(result, 'regroup'):
+                result.regroup(regroup_str)
         else:
             args = {}
             display_name = os.path.basename(video_file) if video_file else task_id
@@ -934,10 +968,11 @@ def asr_task_worker(task_data: dict) -> None:
                 )
                 args["input_sr"] = 16000
 
-            if custom_regroup and custom_regroup.lower() != "default":
-                cleaned_regroup_str, _, _ = strip_pad_from_regroup(custom_regroup)
-                if cleaned_regroup_str:
-                    args["regroup"] = cleaned_regroup_str
+            if regroup_str:
+                args["regroup"] = regroup_str
+            # suppress_silence refines segment boundaries based on silence
+            # detection, pulling subtitle start/end to actual speech edges.
+            args["suppress_silence"] = True
 
             args.update(whisper_kwargs)
 
@@ -948,6 +983,11 @@ def asr_task_worker(task_data: dict) -> None:
             result = _transcribe_with_kwarg_filter(
                 current_model, task=actual_task, language=language, **args, verbose=None
             )
+
+        # Wall-clock cap enforcement: split segments exceeding 8s screen time.
+        # stable-ts's sd= caps speech time, not wall-clock — this catches the rest.
+        from subgen.services.subtitle_constraints import enforce_wall_clock_cap
+        enforce_wall_clock_cap(result)
 
         appendLine(result)
         if filter_subtitles:

@@ -2,6 +2,15 @@
 
 Splits oversized segments and fixes overlapping timestamps so that
 every subtitle conforms to standard display limits.
+
+Wall-clock cap enforcement (ported from WhisperJAV):
+    ``enforce_wall_clock_cap()`` splits any segment whose wall-clock span
+    (``segment.end - segment.start``) exceeds a configurable limit (default
+    8 seconds).  stable-ts's ``sd=`` regroup operator measures cumulative
+    *speech* time (sum of word durations), NOT wall-clock time.  When
+    inter-word gaps push screen time past the cap without triggering ``sd``,
+    this post-pass catches those cases and splits at word boundaries using
+    an even-split strategy.
 """
 
 import logging
@@ -17,6 +26,9 @@ MAX_LINES_PER_SUBTITLE: int = 2
 MAX_CHARS_PER_SEGMENT: int = 84  # 42 * 2
 MIN_GAP_BETWEEN_SUBTITLES: float = 0.083  # 2 frames at 24fps
 
+# Wall-clock duration cap (seconds)
+MAX_SUBTITLE_WALL_CLOCK: float = 8.0
+
 _METADATA_MARKER: str = "transcribed by whisperai with faster-whisper"
 _MIN_SEGMENT_DURATION: float = 0.05  # 50ms floor
 
@@ -29,9 +41,12 @@ _MIN_SEGMENT_DURATION: float = 0.05  # 50ms floor
 def _build_segment_from_words(
     word_group: list, original_segment: object
 ) -> StableSegment:
-    """Create a StableSegment from a group of WordTiming objects."""
-    speaker_label: Optional[str] = getattr(original_segment, "speaker", None)
+    """Create a StableSegment from a group of WordTiming objects.
 
+    Preserves metadata from the original segment (speaker, logprob,
+    no_speech_prob, compression_ratio, temperature, id) so downstream
+    processing and filtering work correctly.
+    """
     word_dicts = [
         {
             "word": getattr(w, "word", ""),
@@ -42,7 +57,18 @@ def _build_segment_from_words(
         for w in word_group
     ]
     sub_seg = StableSegment(words=word_dicts, ignore_unused_args=True)
-    sub_seg.speaker = speaker_label
+
+    # Copy metadata from the original segment so filters and exporters
+    # still have access to speech confidence, speaker labels, etc.
+    _METADATA_ATTRS: List[str] = [
+        "speaker", "no_speech_prob", "avg_logprob",
+        "compression_ratio", "temperature", "id",
+    ]
+    for attr in _METADATA_ATTRS:
+        value = getattr(original_segment, attr, None)
+        if value is not None:
+            setattr(sub_seg, attr, value)
+
     return sub_seg
 
 
@@ -141,6 +167,112 @@ def _fix_overlaps_and_gaps(segments: list) -> int:
             overlaps_fixed += 1
 
     return overlaps_fixed
+
+
+# ---------------------------------------------------------------------------
+# Wall-clock duration cap (post-regrouping enforcement)
+# ---------------------------------------------------------------------------
+
+
+def enforce_wall_clock_cap(
+    result: object, max_duration: float = MAX_SUBTITLE_WALL_CLOCK
+) -> int:
+    """Split segments that exceed *max_duration* wall-clock seconds.
+
+    Supplements stable-ts's ``sd`` regroup operator, which caps cumulative
+    *speech* time (sum of word durations) rather than wall-clock time
+    (``segment.end - segment.start``).  Inter-word gaps can push screen
+    time past the cap without triggering ``sd``; this pass catches those.
+
+    Uses an even-split strategy: divide the segment into the minimum number
+    of parts so each part is under *max_duration*, then find the word
+    boundary closest to each split point.
+
+    Args:
+        result: A ``stable_whisper.WhisperResult`` to modify in-place.
+        max_duration: Maximum wall-clock seconds per segment (default 8.0).
+
+    Returns:
+        Number of segments that were split.
+    """
+    if not result or not hasattr(result, "segments") or not result.segments:
+        return 0
+
+    splits_made: int = 0
+    i: int = 0
+
+    while i < len(result.segments):
+        seg = result.segments[i]
+        wall_clock: float = seg.end - seg.start
+
+        words = getattr(seg, "words", None)
+        if wall_clock <= max_duration or not words or len(words) < 2:
+            i += 1
+            continue
+
+        # How many parts are needed so each is <= max_duration?
+        n_parts: int = int(-(-wall_clock // max_duration))  # ceil division
+        if wall_clock / n_parts > max_duration:
+            n_parts += 1
+        if n_parts < 2:
+            i += 1
+            continue
+
+        target_dur: float = wall_clock / n_parts
+
+        # Find word indices for split boundaries (wall-clock based).
+        # Each index is the last word of a sub-segment.
+        split_indices: List[int] = []
+        for p in range(1, n_parts):
+            target_time: float = seg.start + p * target_dur
+            best_idx: int = 0
+            best_diff: float = float("inf")
+            for wi in range(len(words) - 1):  # never split after last word
+                diff: float = abs(words[wi].end - target_time)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_idx = wi
+            split_indices.append(best_idx)
+
+        split_indices = sorted(set(split_indices))
+        if not split_indices:
+            i += 1
+            continue
+
+        # Build word groups from split indices
+        word_groups: List[list] = []
+        prev_idx: int = 0
+        for idx in split_indices:
+            word_groups.append(list(words[prev_idx : idx + 1]))
+            prev_idx = idx + 1
+        # Remaining words
+        word_groups.append(list(words[prev_idx:]))
+
+        # Filter out empty groups
+        word_groups = [g for g in word_groups if g]
+        if len(word_groups) < 2:
+            i += 1
+            continue
+
+        # Build new segments from word groups
+        new_segments: List[StableSegment] = [
+            _build_segment_from_words(group, seg) for group in word_groups
+        ]
+
+        # Replace the original segment
+        result.segments[i : i + 1] = new_segments
+        splits_made += 1
+        # Don't increment i — re-check first new segment in case
+        # it still exceeds the cap (e.g., single very long word).
+
+    if splits_made > 0:
+        logger.info(
+            "Wall-clock cap: split %d segment(s) exceeding %.1fs",
+            splits_made,
+            max_duration,
+        )
+
+    return splits_made
 
 
 # ---------------------------------------------------------------------------
