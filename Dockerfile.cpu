@@ -10,10 +10,10 @@ WORKDIR /build
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg git tzdata build-essential python3-dev libsndfile1-dev || \
+    ffmpeg git tzdata build-essential python3-dev libsndfile1-dev portaudio19-dev || \
     (apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
-    ffmpeg git tzdata build-essential python3-dev libsndfile1-dev) && \
+    ffmpeg git tzdata build-essential python3-dev libsndfile1-dev portaudio19-dev) && \
     rm -rf /var/lib/apt/lists/*
 
 # PyTorch (large, rarely changes)
