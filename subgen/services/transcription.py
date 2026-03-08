@@ -384,7 +384,12 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
             }
             qwen_language = _LANG_MAP.get(language)
 
-        logger.info("Transcribing with Qwen3-ASR (language=%s)", qwen_language or "auto-detect")
+        from subgen.config import boost_words as _boost_words_cfg
+        logger.info(
+            "Transcribing with Qwen3-ASR (language=%s%s)",
+            qwen_language or "auto-detect",
+            f", context={_boost_words_cfg!r}" if _boost_words_cfg else "",
+        )
 
         # Split long audio into scenes at silence boundaries
         scenes = split_audio_scenes(audio_path, _MAX_SCENE_SECONDS)
@@ -408,12 +413,19 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
                 if dynamic_limit != original_max_tokens:
                     qwen_model.max_new_tokens = dynamic_limit
 
+            # Build context string from BOOST_WORDS for contextual biasing.
+            from subgen.config import boost_words as _boost_words
+            qwen_context = _boost_words.strip() if _boost_words else ""
+
             try:
-                scene_results = qwen_model.transcribe(
+                transcribe_kwargs = dict(
                     audio=[scene_path],
                     language=[qwen_language] if qwen_language else None,
                     return_time_stamps=True,
                 )
+                if qwen_context:
+                    transcribe_kwargs["context"] = qwen_context
+                scene_results = qwen_model.transcribe(**transcribe_kwargs)
             finally:
                 if original_max_tokens is not None:
                     qwen_model.max_new_tokens = original_max_tokens

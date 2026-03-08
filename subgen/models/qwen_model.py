@@ -18,6 +18,7 @@ from subgen.config import (
     compute_type,
     model_location,
     qwen_aligner_model as _qwen_aligner_model,
+    qwen_beam_size as _qwen_beam_size,
     qwen_max_new_tokens as _qwen_max_new_tokens,
     qwen_model_name as _qwen_model_name,
     qwen_repetition_penalty as _qwen_repetition_penalty,
@@ -103,32 +104,43 @@ def start_model() -> None:
                 forced_aligner_kwargs=aligner_kwargs,
             )
 
-            _apply_repetition_penalty()
+            _apply_generation_config()
             logger.info("Qwen ASR model loaded successfully")
 
 
-def _apply_repetition_penalty() -> None:
-    """Apply repetition_penalty to the thinker's HF GenerationConfig.
+def _apply_generation_config() -> None:
+    """Apply generation settings to the thinker's HF GenerationConfig.
 
-    Prevents degenerate token spam from autoregressive loops.
+    Settings applied:
+      - repetition_penalty: prevents degenerate token spam from autoregressive loops.
+      - num_beams: beam search explores multiple hypotheses for better word accuracy
+        (>1 is slower but catches ambiguous words that greedy decoding misses).
+
     Access chain: model.model.thinker.generation_config (verified for qwen-asr).
     """
-    if _qwen_repetition_penalty == 1.0:
-        return
-
     try:
         gen_config = model.model.thinker.generation_config
-        gen_config.repetition_penalty = _qwen_repetition_penalty
-        logger.info(
-            "Generation safety: repetition_penalty=%.2f applied to thinker",
-            _qwen_repetition_penalty,
-        )
     except AttributeError as exc:
         logger.warning(
-            "Could not apply repetition_penalty — qwen-asr model structure "
-            "may have changed: %s. Generation will proceed without penalty.",
+            "Could not access thinker generation_config — qwen-asr model "
+            "structure may have changed: %s",
             exc,
         )
+        return
+
+    if _qwen_repetition_penalty != 1.0:
+        gen_config.repetition_penalty = _qwen_repetition_penalty
+
+    if _qwen_beam_size > 1:
+        gen_config.num_beams = _qwen_beam_size
+
+    parts = []
+    if _qwen_repetition_penalty != 1.0:
+        parts.append(f"repetition_penalty={_qwen_repetition_penalty:.2f}")
+    if _qwen_beam_size > 1:
+        parts.append(f"num_beams={_qwen_beam_size}")
+    if parts:
+        logger.info("Generation config: %s applied to thinker", ", ".join(parts))
 
 
 def compute_dynamic_token_limit(audio_duration_sec: float) -> int:

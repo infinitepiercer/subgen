@@ -97,7 +97,7 @@ def log_startup_config() -> None:
     """Print all configuration values at startup in a clean, readable format."""
     from subgen import subgen_version
     from subgen.config import (
-        asr_engine, parakeet_model_name, ngram_lm_alpha, qwen_model_name, qwen_aligner_model,
+        asr_engine, parakeet_model_name, ngram_lm_alpha, qwen_model_name, qwen_aligner_model, qwen_beam_size,
         transcribe_device, whisper_model, whisper_threads, concurrent_transcriptions,
         compute_type, model_location, webhookport, debug,
         transcribe_or_translate, translate_source_languages, detect_confidence_threshold,
@@ -144,6 +144,7 @@ def log_startup_config() -> None:
     elif asr_engine == 'qwen':
         logging.info(f"    Qwen Model         : {qwen_model_name}")
         logging.info(f"    Forced Aligner     : {qwen_aligner_model}")
+        logging.info(f"    Beam Size          : {qwen_beam_size}")
         logging.info(f"    Device             : {transcribe_device}")
     else:
         logging.info(f"    Whisper Model      : {whisper_model}")

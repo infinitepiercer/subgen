@@ -54,7 +54,7 @@ def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
             logging.warning("Audio normalization produced empty output, using original audio")
             return audio_input if not is_file_path else None
 
-        logging.debug("Audio normalized successfully (%d bytes)", len(out))
+        logging.info("Audio normalized successfully (%d bytes)", len(out))
         return out
 
     except ffmpeg.Error as e:
