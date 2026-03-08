@@ -83,9 +83,13 @@ REGROUP_SUBGEN: str = (
     "_sg=1.5"              # split at 1.5s+ gaps (relaxed from default 0.5s)
     "_mg=1.5++80+1"        # merge fragments: gap < 1.5s, combined < 80 chars
     "_sl=80"               # split if segment > 80 chars
-    "_sd=8"                # max 8s speech time per subtitle
     "_cm"                  # final safety clamp
 )
+# Note: sd=8 (speech-duration cap) is intentionally omitted.  stable-ts's sd
+# operator crashes on segments with empty word arrays (argmin of empty sequence).
+# enforce_wall_clock_cap() runs after regrouping and is strictly better: it caps
+# actual screen time (segment.end - segment.start), not just cumulative speech
+# time (sum of word durations).
 
 def _safe_regroup(result: object, regroup_str: str) -> None:
     """Apply regroup string to a WhisperResult, handling empty-segment edge cases.
