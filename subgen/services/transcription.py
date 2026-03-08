@@ -421,17 +421,9 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
             scene_output = scene_results[0]
             scene_text = getattr(scene_output, "text", "") or ""
 
-            # Clean raw text before combining
-            if qwen_clean_text and scene_text:
-                from subgen.services.text_cleaner import clean_asr_text
-                cleaned = clean_asr_text(scene_text)
-                if cleaned != scene_text:
-                    logger.info(
-                        "Text cleaner scene %d: %d -> %d chars",
-                        i + 1, len(scene_text), len(cleaned),
-                    )
-                    scene_output.text = cleaned
-                    scene_text = cleaned
+            # NOTE: text cleaning is deferred to AFTER timestamp merge
+            # (in result_adapter) to avoid text/timestamp mismatch that
+            # causes .find() failures and drops words.
 
             all_texts.append(scene_text)
 

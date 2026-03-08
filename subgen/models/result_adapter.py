@@ -282,6 +282,12 @@ def parakeet_output_to_whisper_result(
         len(word_timestamps), len(final_words),
     )
 
+    # Word-level cleaning AFTER merge so timestamps stay aligned.
+    from subgen.config import qwen_clean_text
+    if qwen_clean_text and final_words:
+        from subgen.services.text_cleaner import clean_word_list
+        final_words = clean_word_list(final_words)
+
     # Fix zero-duration words: scan forward for the next word with a
     # strictly later start_time so consecutive zero-duration items get
     # a proper end time (safety net — Parakeet usually has correct ends).
@@ -429,12 +435,24 @@ def merge_master_with_timestamps(
             continue
 
         word_start = master_text.find(ts_word, master_pos)
+
+        # Recovery: case-insensitive search when exact match fails.
         if word_start == -1:
+            word_start = master_text.lower().find(ts_word.lower(), master_pos)
+
+        if word_start == -1:
+            # All strategies failed — append word with leading space to
+            # prevent concatenation artifacts ("gogogogo").
+            word_text = ts_word if not result else " " + ts_word
             result.append({
-                "word": ts_word,
+                "word": word_text,
                 "start": float(ts_start) if ts_start is not None else 0.0,
                 "end": float(ts_end) if ts_end is not None else 0.0,
             })
+            logger.debug(
+                "merge: word %r not found at pos %d in master text (len=%d)",
+                ts_word, master_pos, len(master_text),
+            )
             continue
 
         word_end = word_start + len(ts_word)
@@ -1013,6 +1031,12 @@ def qwen_output_to_whisper_result(
     # which correctly handles punctuation, contractions, and edge cases.
     # The merge function reads .text/.start_time/.end_time from ForcedAlignItems.
     final_words = merge_master_with_timestamps(full_text, raw_stamps or [])
+
+    # Word-level cleaning AFTER merge so timestamps stay aligned.
+    from subgen.config import qwen_clean_text
+    if qwen_clean_text and final_words:
+        from subgen.services.text_cleaner import clean_word_list
+        final_words = clean_word_list(final_words)
 
     # Fix zero-duration words: the forced aligner often returns point
     # timestamps where start_time == end_time.  Scan forward for the next
