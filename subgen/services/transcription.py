@@ -332,9 +332,9 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
                     self.timestamp = {"word": word_timestamps}
 
             combined = _CombinedOutput(" ".join(full_text_parts), all_word_timestamps)
-            result = parakeet_output_to_whisper_result(combined, language=language or "en")
+            result = parakeet_output_to_whisper_result(combined, language=language or "en", audio_path=audio_path)
         else:
-            result = parakeet_output_to_whisper_result(output[0], language=language or "en")
+            result = parakeet_output_to_whisper_result(output[0], language=language or "en", audio_path=audio_path)
 
         return result
     finally:
@@ -417,6 +417,7 @@ def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
         result = qwen_output_to_whisper_result(
             results[0],
             language=language or getattr(results[0], "language", "en") or "en",
+            audio_path=audio_path,
         )
 
         return result
