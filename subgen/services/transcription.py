@@ -87,6 +87,41 @@ REGROUP_SUBGEN: str = (
     "_cm"                  # final safety clamp
 )
 
+def _safe_regroup(result: object, regroup_str: str) -> None:
+    """Apply regroup string to a WhisperResult, handling empty-segment edge cases.
+
+    stable-ts's ``sd`` (split_by_duration) crashes with ``argmin of empty
+    sequence`` when a segment has no words.  This can happen after prior
+    regroup operations (``sp``, ``sg``) create wordless segments.
+
+    This helper strips empty segments before regrouping, then cleans up
+    any new empty segments produced by the regroup itself.
+    """
+    if not result or not hasattr(result, 'regroup'):
+        return
+    if not regroup_str:
+        return
+
+    # Strip segments with no words before regrouping.
+    if hasattr(result, 'segments') and result.segments:
+        result.segments = [
+            seg for seg in result.segments
+            if hasattr(seg, 'words') and len(seg.words) > 0
+        ]
+
+    if not result.segments:
+        return
+
+    result.regroup(regroup_str)
+
+    # Clean up any empty segments the regroup may have produced.
+    if hasattr(result, 'segments'):
+        result.segments = [
+            seg for seg in result.segments
+            if hasattr(seg, 'words') and len(seg.words) > 0
+        ]
+
+
 # Regex for capitalizing first letter after sentence-ending punctuation
 _SENTENCE_START_RE = re.compile(r'(?:^|[.!?]\s+)([a-z])')
 
@@ -780,13 +815,10 @@ def gen_subtitles(
 
         if asr_engine == 'parakeet':
             result = _transcribe_parakeet(data, force_language.to_iso_639_1(), actual_task)
-            # Apply regroup via stable-ts post-processing
-            if regroup_str and hasattr(result, 'regroup'):
-                result.regroup(regroup_str)
+            _safe_regroup(result, regroup_str)
         elif asr_engine == 'qwen':
             result = _transcribe_qwen(data, force_language.to_iso_639_1(), actual_task)
-            if regroup_str and hasattr(result, 'regroup'):
-                result.regroup(regroup_str)
+            _safe_regroup(result, regroup_str)
         else:
             args = {}
             display_name = os.path.basename(file_path)
@@ -934,9 +966,7 @@ def asr_task_worker(task_data: dict) -> None:
                 )
 
             result = _transcribe_parakeet(audio_data, language, actual_task)
-            # Apply regroup via stable-ts post-processing
-            if regroup_str and hasattr(result, 'regroup'):
-                result.regroup(regroup_str)
+            _safe_regroup(result, regroup_str)
         elif asr_engine == 'qwen':
             if encode:
                 audio_data = file_content
@@ -949,8 +979,7 @@ def asr_task_worker(task_data: dict) -> None:
                 )
 
             result = _transcribe_qwen(audio_data, language, actual_task)
-            if regroup_str and hasattr(result, 'regroup'):
-                result.regroup(regroup_str)
+            _safe_regroup(result, regroup_str)
         else:
             args = {}
             display_name = os.path.basename(video_file) if video_file else task_id
