@@ -668,6 +668,20 @@ def _post_process_result(
     enforce_min_subtitle_duration(result, min_subtitle_duration)
 
     if enable_diarization:
+        # Unload Parakeet (and any other ASR model) before running the
+        # Sortformer diarizer — otherwise the two models fight for VRAM and
+        # Sortformer OOMs on 16 GB GPUs (the encoder alone needs ~1.7 GB).
+        try:
+            from subgen.models.parakeet_model import perform_model_cleanup
+            perform_model_cleanup()
+            import gc
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception as e:
+            logging.warning(f"Could not unload Parakeet before diarization: {e}")
+
         from subgen.services.diarization import add_speaker_labels
         speaker_count = add_speaker_labels(result, audio_data, transcribe_device)
         logging.info(f"Diarization: identified {speaker_count} speaker(s)")

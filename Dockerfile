@@ -73,7 +73,8 @@ ENV ASR_ENGINE=${ASR_ENGINE} \
     HF_HOME=/cache/huggingface \
     MPLCONFIGDIR=/cache/matplotlib \
     NEMO_CACHE_DIR=/cache/nemo \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python3", "launcher.py"]
