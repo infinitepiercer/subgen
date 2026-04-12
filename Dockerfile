@@ -52,6 +52,11 @@ RUN apt-get update && \
     cp bin/lmplz /usr/local/bin/ && \
     rm -rf /tmp/kenlm
 
+# Layer 3d: Flash Attention (GPU-only speedup for ESPnet/transformers attention layers)
+RUN pip install --no-cache-dir --prefix=/install \
+    flash-attn --no-build-isolation || \
+    echo "Flash Attention install failed — continuing without it (fallback to default attention)"
+
 WORKDIR /subgen
 
 # Layer 4: Source code (tiny, changes on every push)
