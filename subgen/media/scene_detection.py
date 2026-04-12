@@ -142,12 +142,18 @@ def _extract_scene_ffmpeg(audio_path: str, start: float, duration: float) -> str
     """Extract a scene from the audio file using ffmpeg. Returns temp file path."""
     tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
     tmp.close()
-    subprocess.run(
+    result = subprocess.run(
         ["ffmpeg", "-y", "-i", audio_path, "-ss", str(start),
          "-t", str(duration), "-ar", "16000", "-ac", "1",
          "-c:a", "pcm_s16le", tmp.name],
         capture_output=True, timeout=120,
     )
+    if result.returncode != 0:
+        stderr_msg = result.stderr.decode(errors='replace') if result.stderr else ''
+        logger.error(
+            "ffmpeg scene extraction failed (rc=%d) for %s at %.2fs+%.2fs: %s",
+            result.returncode, audio_path, start, duration, stderr_msg,
+        )
     return tmp.name
 
 
@@ -489,15 +495,35 @@ def _detect_with_auditok(
 def _detect_fixed(
     total_duration: float,
     max_scene_duration: float,
+    overlap: float = 1.5,
 ) -> List[Tuple[float, float]]:
-    """Fixed-size splitting (fallback when auditok is not available)."""
+    """Fixed-size splitting (fallback when auditok is not available).
+
+    Each scene overlaps with the next by *overlap* seconds so that words
+    near a chunk boundary are seen by both the current and the next
+    transcription pass.  The transcription stitching layer is responsible
+    for deduplicating the overlapping region.
+
+    Parameters
+    ----------
+    total_duration:
+        Total audio duration in seconds.
+    max_scene_duration:
+        Maximum scene duration (including overlap) in seconds.
+    overlap:
+        Overlap between consecutive scenes in seconds (default 1.5s).
+    """
     scenes: List[Tuple[float, float]] = []
     cursor = 0.0
     while cursor < total_duration:
         end = min(cursor + max_scene_duration, total_duration)
         if (end - cursor) >= _MIN_SCENE_DURATION:
             scenes.append((cursor, end))
-        cursor = end
+        if end >= total_duration:
+            break
+        # Advance by (max_scene_duration - overlap) so the next scene starts
+        # overlap seconds before the end of the current one.
+        cursor = end - overlap
     return scenes
 
 

@@ -41,23 +41,13 @@ jellyfinserver: str = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER',
 # ---------------------------------------------------------------------------
 # ASR Backend Selection
 # ---------------------------------------------------------------------------
-asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper', 'parakeet', or 'qwen'
-parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-0.6b-v3')
+asr_engine: str = os.getenv('ASR_ENGINE', 'whisper').lower()  # 'whisper' or 'parakeet'
+parakeet_model_name: str = os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-1.1b')
 ngram_lm_alpha: float = float(os.getenv('NGRAM_LM_ALPHA', '0.3'))
 # Comma-separated list of words/phrases to boost recognition of (e.g. character names)
 boost_words: str = os.getenv('BOOST_WORDS', '')
 
-# ---------------------------------------------------------------------------
-# Qwen ASR Configuration
-# ---------------------------------------------------------------------------
-qwen_model_name: str = os.getenv('QWEN_MODEL', 'Qwen/Qwen3-ASR-1.7B')
-qwen_aligner_model: str = os.getenv('QWEN_ALIGNER_MODEL', 'Qwen/Qwen3-ForcedAligner-0.6B')
-qwen_max_new_tokens: int = int(os.getenv('QWEN_MAX_NEW_TOKENS', '4096'))
-qwen_repetition_penalty: float = float(os.getenv('QWEN_REPETITION_PENALTY', '1.1'))
-qwen_beam_size: int = int(os.getenv('QWEN_BEAM_SIZE', '3'))
-qwen_max_tokens_per_second: float = float(os.getenv('QWEN_MAX_TOKENS_PER_SECOND', '20.0'))
-qwen_min_tokens_floor: int = int(os.getenv('QWEN_MIN_TOKENS_FLOOR', '256'))
-qwen_clean_text: bool = convert_to_bool(os.getenv('QWEN_CLEAN_TEXT', True))
+clean_text: bool = convert_to_bool(os.getenv('CLEAN_TEXT', True))
 drop_nonverbal_segments: bool = convert_to_bool(os.getenv('DROP_NONVERBAL_SEGMENTS', False))
 
 # ---------------------------------------------------------------------------
@@ -182,12 +172,9 @@ skip_if_language_is_not_set_but_subtitles_exist: bool = get_env_with_fallback(
     False,
     convert_to_bool,
 )
-# Original variable name has a typo (missing 'p' in "whisper") - kept for backward compatibility
-should_whiser_detect_audio_language: bool = convert_to_bool(
+should_whisper_detect_audio_language: bool = convert_to_bool(
     os.getenv('SHOULD_WHISPER_DETECT_AUDIO_LANGUAGE', False),
 )
-# Correctly-spelled alias
-should_whisper_detect_audio_language: bool = should_whiser_detect_audio_language
 
 show_in_subname_subgen: bool = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_SUBGEN', True))
 show_in_subname_model: bool = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_MODEL', True))

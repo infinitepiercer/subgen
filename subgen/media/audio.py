@@ -28,12 +28,13 @@ def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
             run_kwargs = {'input': audio_input}
 
         # Filter chain to maximise speech intelligibility:
-        #   1. highpass=200  – remove low-frequency rumble / HVAC noise
-        #   2. acompressor   – bring up quiet speech (fast attack, slow release)
+        #   1. highpass=80   – remove low-frequency rumble / HVAC noise while
+        #                      preserving male voice fundamentals (85-180 Hz)
+        #   2. acompressor   – bring up quiet speech (moderate attack, slow release)
         #   3. loudnorm      – EBU R128 loudness normalisation to -16 LUFS
         af_chain = (
-            'highpass=f=200,'
-            'acompressor=threshold=-25dB:ratio=4:attack=5:release=200,'
+            'highpass=f=80,'
+            'acompressor=threshold=-25dB:ratio=4:attack=20:release=200,'
             'loudnorm=I=-16:TP=-1.5:LRA=11'
         )
 
@@ -67,9 +68,12 @@ def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
 
 async def get_audio_chunk(audio_file, offset=None, length=None, sample_rate=16000, audio_format=np.int16):
     """
-    Extract a chunk of audio from a file, starting at the given offset and of the given length.
+    Extract a chunk of audio from a WAV file, starting at the given offset and of the given length.
 
-    :param audio_file: The audio file (UploadFile or file-like object).
+    Handles the WAV header correctly by parsing the RIFF/data chunk to find the
+    true start of PCM data before applying the time-based seek offset.
+
+    :param audio_file: The audio file (UploadFile or file-like object with async seek/read).
     :param offset: The offset in seconds to start the extraction.
     :param length: The length in seconds for the chunk to be extracted.
     :param sample_rate: The sample rate of the audio (default 16000).
@@ -77,6 +81,8 @@ async def get_audio_chunk(audio_file, offset=None, length=None, sample_rate=1600
 
     :return: A numpy array containing the extracted audio chunk.
     """
+    import struct
+
     if offset is None:
         from subgen.config import detect_language_offset
         offset = detect_language_offset
@@ -87,16 +93,43 @@ async def get_audio_chunk(audio_file, offset=None, length=None, sample_rate=1600
     # Number of bytes per sample (for int16, 2 bytes per sample)
     bytes_per_sample = np.dtype(audio_format).itemsize
 
-    # Calculate the start byte based on offset and sample rate
-    start_byte = offset * sample_rate * bytes_per_sample
+    # Parse the WAV header to find the data chunk offset.
+    # A standard WAV header is 44 bytes, but the actual 'data' chunk offset can
+    # vary if the file contains metadata chunks (e.g. LIST/INFO).  We scan for
+    # the 'data' sub-chunk ID to find the true start of PCM samples.
+    await audio_file.seek(0)
+    header = await audio_file.read(12)  # RIFF chunk descriptor
+
+    data_offset = 44  # safe default for standard 44-byte WAV headers
+    if len(header) >= 12 and header[:4] == b'RIFF' and header[8:12] == b'WAVE':
+        # Walk sub-chunks to locate the 'data' chunk
+        pos = 12
+        await audio_file.seek(pos)
+        while True:
+            chunk_header = await audio_file.read(8)
+            if len(chunk_header) < 8:
+                break
+            chunk_id = chunk_header[:4]
+            chunk_size = struct.unpack_from('<I', chunk_header, 4)[0]
+            pos += 8
+            if chunk_id == b'data':
+                data_offset = pos
+                break
+            # Skip over this sub-chunk
+            pos += chunk_size
+            await audio_file.seek(pos)
+
+    # Calculate the start byte relative to the PCM data section
+    pcm_start_byte = int(offset * sample_rate * bytes_per_sample)
+    seek_position = data_offset + pcm_start_byte
 
     # Calculate the length in bytes based on the length in seconds
-    length_in_bytes = length * sample_rate * bytes_per_sample
+    length_in_bytes = int(length * sample_rate * bytes_per_sample)
 
-    # Seek to the start position (this assumes the audio_file is a file-like object)
-    await audio_file.seek(start_byte)
+    # Seek to the start position within the PCM data
+    await audio_file.seek(seek_position)
 
-    # Read the required chunk of audio (length_in_bytes)
+    # Read the required chunk of audio
     chunk = await audio_file.read(length_in_bytes)
 
     # Convert the chunk into a numpy array (normalized to float32)
@@ -247,9 +280,9 @@ def get_audio_tracks(video_file):
         audio_tracks = []
         for stream in audio_streams:
             audio_track = {
-                "index": int(stream.get("index", None)),
+                "index": int(stream.get("index", 0)),
                 "codec": stream.get("codec_name", "Unknown"),
-                "channels": int(stream.get("channels", None)),
+                "channels": int(stream.get("channels", 0)),
                 "language": LanguageCode.from_iso_639_2(stream.get("tags", {}).get("language", "Unknown")),
                 "title": stream.get("tags", {}).get("title", "None"),
                 "default": stream.get("disposition", {}).get("default", 0) == 1,

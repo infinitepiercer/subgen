@@ -62,10 +62,6 @@ def refresh_jellyfin_metadata(item_id: str, server_ip: str = None, jellyfin_toke
         "Authorization": f"MediaBrowser Token={jellyfin_token}",
     }
 
-    # Cheap way to get the admin user id, and save it for later use.
-    users = json.loads(requests.get(f"{server_ip}/Users", headers=headers).content)
-    jellyfin_admin = get_jellyfin_admin(users)
-
     # Sending the POST request to refresh metadata
     response = requests.post(url, headers=headers)
 

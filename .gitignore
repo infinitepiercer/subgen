@@ -13,3 +13,9 @@ subgen.env
 !subgen/models/
 __pycache__/
 docker-compose-qwen.md
+
+# Tool/IDE dot-folders
+.serena/
+.claude/
+.firecrawl/
+CLAUDE.md

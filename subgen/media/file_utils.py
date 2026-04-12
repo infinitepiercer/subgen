@@ -16,7 +16,7 @@ def has_audio(file_path: str) -> bool:
         if not is_valid_path(file_path):
             return False
 
-        if not (has_video_extension(file_path) or has_audio_extension(file_path)):
+        if not (has_video_extension(file_path) or isAudioFileExtension(os.path.splitext(file_path)[1].lower())):
             return False
 
         with av.open(file_path) as container:
@@ -53,10 +53,6 @@ def has_video_extension(file_name: str) -> bool:
     file_extension = os.path.splitext(file_name)[1].lower()  # Get the file extension
     return file_extension in VIDEO_EXTENSIONS
 
-
-def has_audio_extension(file_name: str) -> bool:
-    file_extension = os.path.splitext(file_name)[1].lower()  # Get the file extension
-    return file_extension in AUDIO_EXTENSIONS
 
 
 def is_file_stable(file_path: str, wait_time: int = 2, check_intervals: int = 3) -> bool:

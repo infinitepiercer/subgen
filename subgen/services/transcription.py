@@ -23,7 +23,7 @@ from subgen.config import (
     normalize_audio as normalize_audio_enabled,
     only_skip_if_subgen_subtitle,
     preferred_audio_languages,
-    should_whiser_detect_audio_language,
+    should_whisper_detect_audio_language,
     skip_if_audio_track_is_in_list,
     skip_if_to_transcribe_sub_already_exist,
     skip_lang_codes_list,
@@ -197,9 +197,6 @@ def _start_model() -> None:
     if asr_engine == 'parakeet':
         from subgen.models.parakeet_model import start_model as start_parakeet
         start_parakeet()
-    elif asr_engine == 'qwen':
-        from subgen.models.qwen_model import start_model as start_qwen
-        start_qwen()
     else:
         from subgen.models.whisper_model import start_model as start_whisper
         start_whisper()
@@ -210,9 +207,6 @@ def _delete_model() -> None:
     if asr_engine == 'parakeet':
         from subgen.models.parakeet_model import delete_model as delete_parakeet
         delete_parakeet()
-    elif asr_engine == 'qwen':
-        from subgen.models.qwen_model import delete_model as delete_qwen
-        delete_qwen()
     else:
         from subgen.models.whisper_model import delete_model as delete_whisper
         delete_whisper()
@@ -348,140 +342,10 @@ def _transcribe_parakeet(audio_data: object, language: str, task: str) -> object
         _cleanup_scenes(scenes, audio_path, cleanup_path)
 
 
-# ---------------------------------------------------------------------------
-# Qwen3-ASR transcription backend
-# ---------------------------------------------------------------------------
 
 
-def _transcribe_qwen(audio_data: object, language: str, task: str) -> object:
-    """Transcribe using Qwen3-ASR model.
 
-    Accepts audio as a file path (str), raw bytes, or a numpy array.
-    Returns a WhisperResult-compatible object via the result adapter.
 
-    Long audio files are automatically split into scenes at speech/silence
-    boundaries (default 30s max via Silero VAD + auditok).
-    """
-    from subgen.config import qwen_clean_text
-    from subgen.media.scene_detection import get_audio_duration, split_audio_scenes
-    from subgen.models.qwen_model import model as qwen_model, compute_dynamic_token_limit
-    from subgen.models.result_adapter import qwen_output_to_whisper_result
-
-    audio_path, cleanup_path = _ensure_audio_path(audio_data)
-    scenes: list[tuple[str, float]] = []
-    try:
-        # Map language code to Qwen's expected format (e.g. "en" -> "English")
-        qwen_language = None
-        if language:
-            _LANG_MAP = {
-                "en": "English", "fr": "French", "de": "German", "es": "Spanish",
-                "it": "Italian", "pt": "Portuguese", "ru": "Russian", "ja": "Japanese",
-                "ko": "Korean", "zh": "Chinese", "nl": "Dutch", "pl": "Polish",
-                "sv": "Swedish", "da": "Danish", "fi": "Finnish", "hu": "Hungarian",
-                "cs": "Czech", "ro": "Romanian", "bg": "Bulgarian", "hr": "Croatian",
-                "sk": "Slovak", "sl": "Slovenian", "et": "Estonian", "lv": "Latvian",
-                "lt": "Lithuanian", "el": "Greek", "mt": "Maltese", "uk": "Ukrainian",
-            }
-            qwen_language = _LANG_MAP.get(language)
-
-        from subgen.config import boost_words as _boost_words_cfg
-        logger.info(
-            "Transcribing with Qwen3-ASR (language=%s%s)",
-            qwen_language or "auto-detect",
-            f", context={_boost_words_cfg!r}" if _boost_words_cfg else "",
-        )
-
-        # Split long audio into scenes at silence boundaries
-        scenes = split_audio_scenes(audio_path, _MAX_SCENE_SECONDS)
-        is_chunked = len(scenes) > 1 or scenes[0][0] != audio_path
-
-        if is_chunked:
-            logger.info("Audio split into %d scene(s) for Qwen3-ASR", len(scenes))
-
-        all_texts: list[str] = []
-        all_timestamps: list[object] = []
-
-        for i, (scene_path, scene_offset) in enumerate(scenes):
-            if is_chunked:
-                logger.info("Transcribing scene %d/%d (offset %.1fs)", i + 1, len(scenes), scene_offset)
-
-            # Dynamic token budget per scene
-            scene_duration = get_audio_duration(scene_path)
-            original_max_tokens = getattr(qwen_model, 'max_new_tokens', None)
-            if scene_duration > 0 and original_max_tokens:
-                dynamic_limit = compute_dynamic_token_limit(scene_duration)
-                if dynamic_limit != original_max_tokens:
-                    qwen_model.max_new_tokens = dynamic_limit
-
-            # Build context string from BOOST_WORDS for contextual biasing.
-            from subgen.config import boost_words as _boost_words
-            qwen_context = _boost_words.strip() if _boost_words else ""
-
-            try:
-                transcribe_kwargs = dict(
-                    audio=[scene_path],
-                    language=[qwen_language] if qwen_language else None,
-                    return_time_stamps=True,
-                )
-                if qwen_context:
-                    transcribe_kwargs["context"] = qwen_context
-                scene_results = qwen_model.transcribe(**transcribe_kwargs)
-            finally:
-                if original_max_tokens is not None:
-                    qwen_model.max_new_tokens = original_max_tokens
-
-            scene_output = scene_results[0]
-            scene_text = getattr(scene_output, "text", "") or ""
-
-            # NOTE: text cleaning is deferred to AFTER timestamp merge
-            # (in result_adapter) to avoid text/timestamp mismatch that
-            # causes .find() failures and drops words.
-
-            all_texts.append(scene_text)
-
-            # Collect timestamps with offset applied.
-            # ForcedAlignItem is a frozen dataclass, so we create simple
-            # wrapper objects with the offset baked in.
-            raw_stamps = getattr(scene_output, "time_stamps", None)
-            if raw_stamps:
-                if scene_offset > 0:
-                    class _OffsetStamp:
-                        __slots__ = ("text", "start_time", "end_time")
-                        def __init__(self, ts: object, offset: float):
-                            self.text = getattr(ts, "text", "")
-                            self.start_time = float(getattr(ts, "start_time", 0.0)) + offset
-                            self.end_time = float(getattr(ts, "end_time", 0.0)) + offset
-                    all_timestamps.extend(_OffsetStamp(ts, scene_offset) for ts in raw_stamps)
-                else:
-                    all_timestamps.extend(raw_stamps)
-
-        # Build combined result
-        if is_chunked and all_timestamps:
-            # Create a synthetic combined output for the adapter
-            class _CombinedQwenOutput:
-                def __init__(self, text: str, time_stamps: list, lang: str):
-                    self.text = text
-                    self.time_stamps = time_stamps
-                    self.language = lang
-
-            combined_text = " ".join(all_texts)
-            detected_lang = getattr(scenes and scene_results[0], "language", None) or language or "en"
-            combined = _CombinedQwenOutput(combined_text, all_timestamps, detected_lang)
-            result = qwen_output_to_whisper_result(
-                combined,
-                language=language or detected_lang,
-                audio_path=audio_path,
-            )
-        else:
-            result = qwen_output_to_whisper_result(
-                scene_results[0],
-                language=language or getattr(scene_results[0], "language", "en") or "en",
-                audio_path=audio_path,
-            )
-
-        return result
-    finally:
-        _cleanup_scenes(scenes, audio_path, cleanup_path)
 
 
 # ---------------------------------------------------------------------------
@@ -547,8 +411,8 @@ def enforce_min_subtitle_duration(result, min_duration: float) -> None:
     Modifies *result* in place.  Any segment whose duration is less than
     *min_duration* (seconds) gets its end time pushed out.  Overlapping with
     the next segment is intentional — media players stack overlapping SRT
-    entries on screen.  Capped at the next segment's *end* to prevent truly
-    reversed ordering.
+    entries on screen.  Capped at the next segment's *start* to prevent
+    overlapping into the next segment entirely.
     """
     if min_duration <= 0:
         return
@@ -558,7 +422,7 @@ def enforce_min_subtitle_duration(result, min_duration: float) -> None:
         if duration < min_duration:
             desired_end = segment.start + min_duration
             if i + 1 < len(segments):
-                desired_end = min(desired_end, segments[i + 1].end)
+                desired_end = min(desired_end, segments[i + 1].start)
             segment.end = desired_end
 
 
@@ -648,7 +512,7 @@ def gen_subtitles_queue(
 
     # Check if we would like to detect audio language when no language is specified.
     # Will return here again with a specified language from Whisper.
-    if not force_language and should_whiser_detect_audio_language:
+    if not force_language and should_whisper_detect_audio_language:
         # Make a detect-language task
         task_id = {"path": file_path, "type": "detect_language"}
         # Pass metadata info (kwargs) to the detect task
@@ -764,6 +628,70 @@ def should_skip_file(file_path: str, target_language: LanguageCode) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Shared post-processing pipeline
+# ---------------------------------------------------------------------------
+
+
+def _post_process_result(
+    result: object,
+    start_pad: float,
+    end_pad: float,
+    transcribe_or_translate_task: str,
+    audio_data: object,
+) -> None:
+    """Apply shared post-processing to a transcription result.
+
+    This consolidates the identical pipeline used by both ``gen_subtitles``
+    and ``asr_task_worker``: wall-clock cap, filtering, capitalization,
+    padding, min duration, diarization, two-pass translation, and display
+    constraints.
+
+    Args:
+        result: A ``stable_whisper.WhisperResult`` (or compatible).
+        start_pad: Seconds to pad segment starts (from regroup strip).
+        end_pad: Seconds to pad segment ends (from regroup strip).
+        transcribe_or_translate_task: The original task string — checked
+            for ``"transcribe_and_translate"`` to trigger Pass 2.
+        audio_data: Audio source passed to the diarization pipeline
+            (file path *or* raw audio bytes/array).
+    """
+    # Wall-clock cap enforcement: split segments exceeding 8s screen time.
+    # stable-ts's sd= caps speech time, not wall-clock — this catches the rest.
+    from subgen.services.subtitle_constraints import enforce_wall_clock_cap
+    enforce_wall_clock_cap(result)
+
+    appendLine(result)
+    if filter_subtitles:
+        filter_segments(result)
+    _capitalize_segments(result)
+    apply_pad(result, start_pad, end_pad)
+    enforce_min_subtitle_duration(result, min_subtitle_duration)
+
+    if enable_diarization:
+        from subgen.services.diarization import add_speaker_labels
+        speaker_count = add_speaker_labels(result, audio_data, transcribe_device)
+        logging.info(f"Diarization: identified {speaker_count} speaker(s)")
+
+    # Pass 2: Translate non-English segments if using two-pass mode
+    if transcribe_or_translate_task == "transcribe_and_translate":
+        from subgen.services.translation import translate_segments, ensure_translation_models
+        from subgen.config import translate_source_languages, detect_confidence_threshold, model_location, debug
+
+        # Ensure translation models are downloaded (no-op after first call)
+        source_langs = [lang.strip() for lang in translate_source_languages.split(',')]
+        ensure_translation_models(source_langs, model_location)
+
+        # Translate non-English segments (timestamps are never modified)
+        logging.info("Pass 1: Transcription complete. Starting Pass 2: Translation...")
+        translated_count = translate_segments(result, detect_confidence_threshold, debug)
+        logging.info(f"Pass 2: Translated {translated_count} non-English segments to English")
+
+    # Enforce subtitle display constraints (max line length, overlap, gaps)
+    from subgen.services.subtitle_constraints import enforce_display_constraints
+    enforce_display_constraints(result)
+
+
+# ---------------------------------------------------------------------------
 # Main transcription function
 # ---------------------------------------------------------------------------
 
@@ -824,9 +752,6 @@ def gen_subtitles(
         if asr_engine == 'parakeet':
             result = _transcribe_parakeet(data, force_language.to_iso_639_1(), actual_task)
             _safe_regroup(result, regroup_str)
-        elif asr_engine == 'qwen':
-            result = _transcribe_qwen(data, force_language.to_iso_639_1(), actual_task)
-            _safe_regroup(result, regroup_str)
         else:
             args = {}
             display_name = os.path.basename(file_path)
@@ -852,40 +777,7 @@ def gen_subtitles(
                 **args,
             )
 
-        # Wall-clock cap enforcement: split segments exceeding 8s screen time.
-        # stable-ts's sd= caps speech time, not wall-clock — this catches the rest.
-        from subgen.services.subtitle_constraints import enforce_wall_clock_cap
-        enforce_wall_clock_cap(result)
-
-        appendLine(result)
-        if filter_subtitles:
-            filter_segments(result)
-        _capitalize_segments(result)
-        apply_pad(result, start_pad, end_pad)
-        enforce_min_subtitle_duration(result, min_subtitle_duration)
-
-        if enable_diarization:
-            from subgen.services.diarization import add_speaker_labels
-            speaker_count = add_speaker_labels(result, data, transcribe_device)
-            logging.info(f"Diarization: identified {speaker_count} speaker(s)")
-
-        # Pass 2: Translate non-English segments if using two-pass mode
-        if transcribe_or_translate_param == "transcribe_and_translate":
-            from subgen.services.translation import translate_segments, ensure_translation_models
-            from subgen.config import translate_source_languages, detect_confidence_threshold, model_location, debug
-
-            # Ensure translation models are downloaded (no-op after first call)
-            source_langs = [lang.strip() for lang in translate_source_languages.split(',')]
-            ensure_translation_models(source_langs, model_location)
-
-            # Translate non-English segments (timestamps are never modified)
-            logging.info("Pass 1: Transcription complete. Starting Pass 2: Translation...")
-            translated_count = translate_segments(result, detect_confidence_threshold, debug)
-            logging.info(f"Pass 2: Translated {translated_count} non-English segments to English")
-
-        # Enforce subtitle display constraints (max line length, overlap, gaps)
-        from subgen.services.subtitle_constraints import enforce_display_constraints
-        enforce_display_constraints(result)
+        _post_process_result(result, start_pad, end_pad, transcribe_or_translate_param, data)
 
         # If it is an audio file, write the LRC file
         if is_audio_file and lrc_for_audio_files:
@@ -946,7 +838,7 @@ def asr_task_worker(task_data: dict) -> None:
         _start_model()
 
         # Normalize audio loudness for better transcription accuracy
-        if normalize_audio_enabled and encode:
+        if normalize_audio_enabled:
             from subgen.media.audio import normalize_audio
             normalized = normalize_audio(file_content, is_file_path=False)
             if normalized is not None:
@@ -974,19 +866,6 @@ def asr_task_worker(task_data: dict) -> None:
                 )
 
             result = _transcribe_parakeet(audio_data, language, actual_task)
-            _safe_regroup(result, regroup_str)
-        elif asr_engine == 'qwen':
-            if encode:
-                audio_data = file_content
-            else:
-                audio_data = (
-                    np.frombuffer(file_content, np.int16)
-                    .flatten()
-                    .astype(np.float32)
-                    / 32768.0
-                )
-
-            result = _transcribe_qwen(audio_data, language, actual_task)
             _safe_regroup(result, regroup_str)
         else:
             args = {}
@@ -1021,40 +900,7 @@ def asr_task_worker(task_data: dict) -> None:
                 current_model, task=actual_task, language=language, **args, verbose=None
             )
 
-        # Wall-clock cap enforcement: split segments exceeding 8s screen time.
-        # stable-ts's sd= caps speech time, not wall-clock — this catches the rest.
-        from subgen.services.subtitle_constraints import enforce_wall_clock_cap
-        enforce_wall_clock_cap(result)
-
-        appendLine(result)
-        if filter_subtitles:
-            filter_segments(result)
-        _capitalize_segments(result)
-        apply_pad(result, start_pad, end_pad)
-        enforce_min_subtitle_duration(result, min_subtitle_duration)
-
-        if enable_diarization:
-            from subgen.services.diarization import add_speaker_labels
-            speaker_count = add_speaker_labels(result, file_content, transcribe_device)
-            logging.info(f"Diarization: identified {speaker_count} speaker(s)")
-
-        # Pass 2: Translate non-English segments if using two-pass mode
-        if requested_task == "transcribe_and_translate":
-            from subgen.services.translation import translate_segments, ensure_translation_models
-            from subgen.config import translate_source_languages, detect_confidence_threshold, model_location, debug
-
-            # Ensure translation models are downloaded (no-op after first call)
-            source_langs = [lang.strip() for lang in translate_source_languages.split(',')]
-            ensure_translation_models(source_langs, model_location)
-
-            # Translate non-English segments (timestamps are never modified)
-            logging.info("Pass 1: ASR transcription complete. Starting Pass 2: Translation...")
-            translated_count = translate_segments(result, detect_confidence_threshold, debug)
-            logging.info(f"Pass 2: Translated {translated_count} non-English segments to English")
-
-        # Enforce subtitle display constraints (max line length, overlap, gaps)
-        from subgen.services.subtitle_constraints import enforce_display_constraints
-        enforce_display_constraints(result)
+        _post_process_result(result, start_pad, end_pad, requested_task, file_content)
 
         # Set result for blocking endpoint, using the requested output format
         if result_container:

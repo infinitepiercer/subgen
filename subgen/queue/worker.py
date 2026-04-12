@@ -8,7 +8,6 @@ from subgen.config import (
     asr_engine,
     concurrent_transcriptions,
     parakeet_model_name,
-    qwen_model_name,
     whisper_model,
     transcribe_device,
     compute_type,
@@ -41,7 +40,7 @@ def transcription_worker():
             queue_count = len(task_queue.get_queued_tasks())
             logging.info(f"WORKER START : [{task_type.upper():<10}] {display_name:^40} | Jobs: {proc_count} processing, {queue_count} queued")
             min_dur_str = f"{min_subtitle_duration}s" if min_subtitle_duration > 0 else "off"
-            model_display = parakeet_model_name if asr_engine == 'parakeet' else qwen_model_name if asr_engine == 'qwen' else whisper_model
+            model_display = parakeet_model_name if asr_engine == 'parakeet' else whisper_model
             logging.info(
                 f"  Config: engine={asr_engine}  model={model_display}  device={transcribe_device}  compute={compute_type}  "
                 f"mode={task.get('transcribe_or_translate', transcribe_or_translate)}  "
@@ -94,8 +93,6 @@ def transcription_worker():
                 task_queue.mark_done(task)
                 if asr_engine == 'parakeet':
                     from subgen.models.parakeet_model import delete_model as _delete
-                elif asr_engine == 'qwen':
-                    from subgen.models.qwen_model import delete_model as _delete
                 else:
                     from subgen.models.whisper_model import delete_model as _delete
                 _delete()
