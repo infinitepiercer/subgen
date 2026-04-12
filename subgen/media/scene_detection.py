@@ -362,8 +362,8 @@ def _split_chapter_with_auditok(
 
     scenes: List[Tuple[float, float]] = []
     for sub in sub_regions:
-        sub_start = chapter_start + sub.meta.start
-        sub_end = chapter_start + sub.meta.end
+        sub_start = chapter_start + sub.start
+        sub_end = chapter_start + sub.end
         if (sub_end - sub_start) >= _MIN_SCENE_DURATION:
             scenes.append((sub_start, sub_end))
 
@@ -430,8 +430,8 @@ def _detect_with_auditok(
     speech_regions: List[SpeechRegion] = []
 
     for chapter in story_lines:
-        chapter_start: float = chapter.meta.start
-        chapter_end: float = chapter.meta.end
+        chapter_start: float = chapter.start
+        chapter_end: float = chapter.end
         chapter_duration: float = chapter_end - chapter_start
 
         # If chapter fits within max duration, keep as-is

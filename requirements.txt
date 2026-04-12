@@ -12,6 +12,7 @@ argostranslate
 openai-whisper
 wespeaker @ git+https://github.com/wenet-e2e/wespeaker.git
 s3prl
+espnet
 # wespeaker declared deps (not always pulled by pip from git installs)
 PyYAML
 kaldiio

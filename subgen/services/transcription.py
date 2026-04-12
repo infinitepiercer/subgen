@@ -837,10 +837,19 @@ def asr_task_worker(task_data: dict) -> None:
 
         _start_model()
 
-        # Normalize audio loudness for better transcription accuracy
+        # Normalize audio loudness for better transcription accuracy.
+        # When encode=False (e.g. Bazarr's raw PCM path), file_content is
+        # headerless s16le/16kHz/mono bytes — pass is_raw_pcm=True so ffmpeg
+        # gets explicit format hints instead of trying to probe a container.
         if normalize_audio_enabled:
             from subgen.media.audio import normalize_audio
-            normalized = normalize_audio(file_content, is_file_path=False)
+            normalized = normalize_audio(
+                file_content,
+                is_file_path=False,
+                is_raw_pcm=not encode,
+                raw_sample_rate=16000,
+                raw_channels=1,
+            )
             if normalized is not None:
                 file_content = normalized
 

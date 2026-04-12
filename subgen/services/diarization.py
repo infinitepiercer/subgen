@@ -22,6 +22,7 @@ warnings.filterwarnings(
     module=r"sklearn\..*",
 )
 
+
 from subgen.config import enable_diarization  # noqa: F401 — imported for caller convenience
 from subgen.models import diarization_model as diarization_model_module
 from subgen.models.diarization_model import start_diarization_model

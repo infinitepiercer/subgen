@@ -5,7 +5,13 @@ import numpy as np
 from language_code import LanguageCode
 
 
-def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
+def normalize_audio(
+    audio_input,
+    is_file_path: bool = True,
+    is_raw_pcm: bool = False,
+    raw_sample_rate: int = 16000,
+    raw_channels: int = 1,
+) -> bytes:
     """Normalize audio loudness using ffmpeg's loudnorm filter (EBU R128).
 
     Brings quiet audio up and loud audio down to a consistent level (-16 LUFS,
@@ -15,6 +21,12 @@ def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
     Args:
         audio_input: File path (str) or raw audio bytes.
         is_file_path: True if audio_input is a file path, False if bytes.
+        is_raw_pcm: True if audio_input is headerless raw PCM s16le (e.g.
+            Bazarr's encode=False path). Requires explicit format hints so
+            ffmpeg doesn't attempt container probing and fail with
+            "Invalid data found when processing input".
+        raw_sample_rate: Sample rate for raw PCM input (default 16000).
+        raw_channels: Channel count for raw PCM input (default 1=mono).
 
     Returns:
         Normalized audio as WAV bytes (16kHz mono PCM s16le).
@@ -23,6 +35,15 @@ def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
         if is_file_path:
             input_stream = ffmpeg.input(audio_input)
             run_kwargs = {}
+        elif is_raw_pcm:
+            # Headerless PCM — tell ffmpeg the exact format so it skips probing
+            input_stream = ffmpeg.input(
+                'pipe:0',
+                format='s16le',
+                ar=raw_sample_rate,
+                ac=raw_channels,
+            )
+            run_kwargs = {'input': audio_input}
         else:
             input_stream = ffmpeg.input('pipe:0')
             run_kwargs = {'input': audio_input}
@@ -38,11 +59,15 @@ def normalize_audio(audio_input, is_file_path: bool = True) -> bytes:
             'loudnorm=I=-16:TP=-1.5:LRA=11'
         )
 
+        # Preserve input shape: if caller gave us headerless raw PCM,
+        # return headerless raw PCM so downstream np.frombuffer still works.
+        output_format = 's16le' if is_raw_pcm else 'wav'
+
         out, _ = (
             input_stream
             .output(
                 'pipe:1',
-                format='wav',
+                format=output_format,
                 acodec='pcm_s16le',
                 ar=16000,
                 ac=1,
