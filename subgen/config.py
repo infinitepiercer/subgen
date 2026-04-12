@@ -104,7 +104,9 @@ enable_diarization: bool = convert_to_bool(os.getenv('ENABLE_DIARIZATION', False
 diarization_model: str = os.getenv('DIARIZATION_MODEL', 'english')
 sortformer_model: str = os.getenv('SORTFORMER_MODEL', 'nvidia/diar_sortformer_4spk-v1')
 sortformer_max_speakers: int = int(os.getenv('SORTFORMER_MAX_SPEAKERS', '4'))
-sortformer_chunk_sec: int = int(os.getenv('SORTFORMER_CHUNK_SEC', '120'))
+# Maximum Sortformer chunk size in seconds. Actual chunk is auto-derived
+# from free VRAM and may be smaller. Set explicitly to override.
+sortformer_chunk_sec: int = int(os.getenv('SORTFORMER_CHUNK_SEC', '600'))
 diarization_backend: str = os.getenv('DIARIZATION_BACKEND', 'sortformer')
 
 # ---------------------------------------------------------------------------

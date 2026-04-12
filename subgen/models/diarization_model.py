@@ -220,8 +220,48 @@ def _extract_chunk_wav(audio_path: str, start_sec: float, duration_sec: float, o
     subprocess.run(cmd, check=True)
 
 
-def _diarize_chunked(audio_path: str, total_duration: float) -> List[Tuple[float, float, str]]:
-    """Run Sortformer on overlapping chunks and stitch with time offsets.
+def _calculate_adaptive_chunk_sec(configured_chunk_sec: int) -> int:
+    """Derive a safe chunk size based on free CUDA memory.
+
+    If ``SORTFORMER_CHUNK_SEC`` is explicitly set via env var, respect it.
+    Otherwise, compute from free VRAM.
+    """
+    # Respect explicit user override via env var.
+    if os.environ.get('SORTFORMER_CHUNK_SEC') is not None:
+        return int(configured_chunk_sec)
+
+    if not torch.cuda.is_available():
+        return int(configured_chunk_sec)
+
+    try:
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+    except Exception:
+        return int(configured_chunk_sec)
+
+    free_gb = free_bytes / (1024 ** 3)
+
+    # Empirical rule for Sortformer (conformer encoder, O(n^2) attention):
+    # ~1GB per 60s of audio at fp32 with default settings (rough estimate).
+    # Leave 20% headroom for activations/safety, minus 500MB baseline.
+    usable_gb = max(0.0, free_gb * 0.8 - 0.5)
+    derived = int(usable_gb * 60)
+
+    # Clamp to reasonable range: at least 30s, at most the configured ceiling.
+    derived = max(30, min(int(configured_chunk_sec), derived))
+
+    logger.info(
+        "Adaptive Sortformer chunk: free_vram=%.2fGB, derived_chunk_sec=%ds (configured=%ds)",
+        free_gb, derived, int(configured_chunk_sec),
+    )
+    return derived
+
+
+def _diarize_chunked_at_size(
+    audio_path: str,
+    total_duration: float,
+    chunk_sec_value: float,
+) -> List[Tuple[float, float, str]]:
+    """Run Sortformer on overlapping chunks of size ``chunk_sec_value`` and stitch.
 
     Chunk speakers are emitted with a ``chunk{N}_`` prefix so each chunk's
     speaker IDs remain distinct across the stitched output — cross-chunk
@@ -229,7 +269,7 @@ def _diarize_chunked(audio_path: str, total_duration: float) -> List[Tuple[float
     """
     import tempfile
 
-    chunk_sec = float(_sortformer_chunk_sec)
+    chunk_sec = float(chunk_sec_value)
     overlap = min(_CHUNK_OVERLAP_SEC, chunk_sec / 4.0)
     step = max(1.0, chunk_sec - overlap)
     n_chunks = int(math.ceil((total_duration - overlap) / step)) if total_duration > overlap else 1
@@ -275,18 +315,55 @@ def _diarize_chunked(audio_path: str, total_duration: float) -> List[Tuple[float
     return stitched
 
 
+def _diarize_chunked(audio_path: str, total_duration: float) -> List[Tuple[float, float, str]]:
+    """Run chunked Sortformer diarization with adaptive sizing + OOM fallback.
+
+    Starts at an adaptive chunk size derived from free VRAM and halves on
+    ``torch.cuda.OutOfMemoryError`` down to a minimum floor.
+    """
+    min_chunk = 30
+    chunk_sec = _calculate_adaptive_chunk_sec(int(_sortformer_chunk_sec))
+
+    while chunk_sec >= min_chunk:
+        try:
+            return _diarize_chunked_at_size(audio_path, total_duration, float(chunk_sec))
+        except torch.cuda.OutOfMemoryError:
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            gc.collect()
+            new_size = chunk_sec // 2
+            if new_size < min_chunk:
+                logger.error(
+                    "Sortformer OOM at chunk_sec=%ds; cannot fall back below min=%ds.",
+                    chunk_sec, min_chunk,
+                )
+                raise
+            logger.warning(
+                "Sortformer OOM at chunk_sec=%ds, retrying with %ds. "
+                "Consider lowering SORTFORMER_CHUNK_SEC env var.",
+                chunk_sec, new_size,
+            )
+            chunk_sec = new_size
+
+    raise RuntimeError(f"Sortformer cannot fit even at {min_chunk}s chunks")
+
+
 def diarize(audio_path: str) -> List[Tuple[float, float, str]]:
     """Diarize ``audio_path`` and return ``(start, end, speaker_label)`` tuples.
 
-    Clips longer than ``sortformer_chunk_sec`` (default 600s) are split into
+    Clips longer than the (adaptively-derived) chunk size are split into
     overlapping windows and processed per-chunk to stay within GPU memory.
+    The ``sortformer_chunk_sec`` config value acts as a ceiling; the actual
+    chunk size is auto-derived from free VRAM at call time and may be smaller.
     """
     _load_sortformer()
 
     duration = _probe_duration_seconds(audio_path)
-    chunk_sec = float(_sortformer_chunk_sec)
+    adaptive_chunk_sec = _calculate_adaptive_chunk_sec(int(_sortformer_chunk_sec))
 
-    if duration > 0 and duration > chunk_sec:
+    if duration > 0 and duration > float(adaptive_chunk_sec):
         return _diarize_chunked(audio_path, duration)
 
     return _diarize_single(audio_path)
