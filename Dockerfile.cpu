@@ -1,7 +1,7 @@
 # === Stage 1: Build dependencies ===
 FROM python:3.11-slim-bullseye AS builder
 
-# Build arg: "whisper" (default), "parakeet" (NeMo), or "qwen" (Qwen3-ASR).
+# Build arg: "whisper" (default) or "parakeet" (NeMo).
 ARG ASR_ENGINE=whisper
 
 WORKDIR /build
@@ -30,13 +30,6 @@ COPY requirements-parakeet.txt /tmp/requirements-parakeet.txt
 RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
         pip install --no-cache-dir --prefix=/install \
         -r /tmp/requirements-parakeet.txt --extra-index-url https://download.pytorch.org/whl/cpu ; \
-    fi
-
-# Conditional Qwen ASR installation
-COPY requirements-qwen.txt /tmp/requirements-qwen.txt
-RUN if [ "$ASR_ENGINE" = "qwen" ]; then \
-        pip install --no-cache-dir --prefix=/install \
-        -r /tmp/requirements-qwen.txt --extra-index-url https://download.pytorch.org/whl/cpu ; \
     fi
 
 # === Stage 2: Minimal runtime image ===
