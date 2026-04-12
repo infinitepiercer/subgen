@@ -51,12 +51,14 @@ def normalize_audio(
         # Filter chain to maximise speech intelligibility:
         #   1. highpass=80   – remove low-frequency rumble / HVAC noise while
         #                      preserving male voice fundamentals (85-180 Hz)
-        #   2. acompressor   – bring up quiet speech (moderate attack, slow release)
-        #   3. loudnorm      – EBU R128 loudness normalisation to -16 LUFS
+        #   2. acompressor   – bring up quiet speech (aggressive ratio, fast attack, makeup gain)
+        #   3. speechnorm    – adaptive speech normalisation to smooth remaining level variance
+        #   4. loudnorm      – EBU R128 loudness normalisation to -14 LUFS
         af_chain = (
             'highpass=f=80,'
-            'acompressor=threshold=-25dB:ratio=4:attack=20:release=200,'
-            'loudnorm=I=-16:TP=-1.5:LRA=11'
+            'acompressor=threshold=-40dB:ratio=6:attack=5:release=200:makeup=4dB,'
+            'speechnorm=e=50:r=0.0001:l=1,'
+            'loudnorm=I=-14:TP=-1.5:LRA=11'
         )
 
         # Preserve input shape: if caller gave us headerless raw PCM,

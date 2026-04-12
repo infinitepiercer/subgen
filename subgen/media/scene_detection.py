@@ -380,9 +380,9 @@ def _detect_with_auditok(
     total_duration: float,
     max_scene_duration: float,
     use_silero: bool = True,
-    silero_threshold: float = 0.08,
-    silero_min_silence_ms: int = 1500,
-    silero_min_speech_ms: int = 100,
+    silero_threshold: float = 0.05,
+    silero_min_silence_ms: int = 800,
+    silero_min_speech_ms: int = 80,
 ) -> Tuple[List[Tuple[float, float]], List[SpeechRegion]]:
     """Multi-pass scene detection using auditok + optional Silero VAD.
 

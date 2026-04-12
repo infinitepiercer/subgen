@@ -1,37 +1,27 @@
-"""Speaker diarization service: assign speaker labels to transcription segments via WeSpeaker.
+"""Speaker diarization service: assign speaker labels to transcription segments via Sortformer.
 
-Uses the WeSpeaker toolkit to perform speaker diarization on audio and then
-maps speaker labels back onto the stable-ts transcription result.  Segments
-that span a speaker-change boundary are split at word boundaries so each
-output segment belongs to exactly one speaker.
+Uses NVIDIA NeMo's ``SortformerEncLabelModel`` (end-to-end neural diarizer) to
+produce overlap-aware speaker timelines and then maps those labels back onto
+the stable-ts transcription result.  Segments that span a speaker-change
+boundary are split at word boundaries so each output segment belongs to
+exactly one speaker.
 """
 
 import logging
 import os
 import tempfile
-import warnings
 import wave
 from typing import List, Tuple, Union
 
-# Suppress sklearn FutureWarning about 'force_all_finite' renamed to
-# 'ensure_all_finite' (triggered by HDBSCAN/UMAP during clustering).
-warnings.filterwarnings(
-    "ignore",
-    message=".*force_all_finite.*",
-    category=FutureWarning,
-    module=r"sklearn\..*",
-)
-
-
 from subgen.config import enable_diarization  # noqa: F401 — imported for caller convenience
 from subgen.models import diarization_model as diarization_model_module
-from subgen.models.diarization_model import start_diarization_model
+from subgen.models.diarization_model import diarize as _sortformer_diarize, start_diarization_model
 
 logger = logging.getLogger(__name__)
 
-# Type alias for a single diarization segment returned by wespeaker.
-# Each tuple is (utt, start_seconds, end_seconds, speaker_label).
-DiarSegment = Tuple[str, float, float, int]
+# Type alias for a single diarization segment returned by Sortformer.
+# ``(start_seconds, end_seconds, speaker_label)``.
+DiarSegment = Tuple[float, float, str]
 
 
 # ---------------------------------------------------------------------------
@@ -39,36 +29,11 @@ DiarSegment = Tuple[str, float, float, int]
 # ---------------------------------------------------------------------------
 
 
-def _patch_wespeaker_subsegment() -> None:
-    """Fix wespeaker bug: compute_features returns [1,T,D] but subsegment expects [T,D].
-
-    wespeaker.cli.speaker does ``from wespeaker.diar.extract_emb import subsegment``
-    so we must patch the reference on *both* modules for the fix to take effect.
-    """
-    import wespeaker.diar.extract_emb as _emb  # type: ignore[import-not-found]
-    import wespeaker.cli.speaker as _speaker  # type: ignore[import-not-found]
-
-    _orig = _emb.subsegment
-    if getattr(_orig, "_patched", False):
-        return
-
-    def _fixed_subsegment(fbank, *args, **kwargs):
-        if hasattr(fbank, "ndim") and fbank.ndim == 3:
-            fbank = fbank.squeeze(0)
-        return _orig(fbank, *args, **kwargs)
-
-    _fixed_subsegment._patched = True
-    _emb.subsegment = _fixed_subsegment
-    _speaker.subsegment = _fixed_subsegment
-    logger.debug("Patched wespeaker subsegment to handle 3D fbank tensors")
-
-
 def _ensure_diarization_model(device: str) -> None:
-    """Lazy-load the WeSpeaker model if it has not been loaded yet."""
+    """Lazy-load the Sortformer model if it has not been loaded yet."""
     if diarization_model_module.model is None:
         logger.info("Diarization model not loaded — loading now on %s", device)
         start_diarization_model(device)
-        _patch_wespeaker_subsegment()
 
 
 def _write_temp_wav(audio_bytes: Union[bytes, bytearray]) -> str:
@@ -108,17 +73,46 @@ def _overlap(seg_start: float, seg_end: float, diar_start: float, diar_end: floa
 def _best_speaker_for_interval(
     start: float, end: float, diar_segments: List[DiarSegment]
 ) -> str:
-    """Find the diarization speaker with the most overlap for the given interval."""
-    best_label: str = "Unknown"
-    best_overlap: float = 0.0
+    """Find the diarization speaker with the most overlap for the given interval.
 
-    for _utt, d_start, d_end, d_label in diar_segments:
+    Sortformer emits overlap-aware labels: multiple speakers may be active
+    simultaneously, with their segments overlapping in time.  For a given
+    word interval, we sum the total overlap per speaker label across *all*
+    overlapping diarization segments and return the speaker with the largest
+    total overlap.
+    """
+    if not diar_segments:
+        return "Unknown"
+
+    overlap_by_speaker: dict[str, float] = {}
+    for d_start, d_end, d_label in diar_segments:
         ov = _overlap(start, end, d_start, d_end)
-        if ov > best_overlap:
-            best_overlap = ov
-            best_label = f"Speaker {d_label}"
+        if ov > 0.0:
+            overlap_by_speaker[d_label] = overlap_by_speaker.get(d_label, 0.0) + ov
 
-    return best_label
+    if not overlap_by_speaker:
+        return "Unknown"
+
+    best_label = max(overlap_by_speaker, key=overlap_by_speaker.get)
+    # Normalize Sortformer speaker IDs ("speaker_0", "0", etc.) to a uniform
+    # presentation form used by downstream writers.
+    return _format_speaker_label(best_label)
+
+
+def _format_speaker_label(raw_label: str) -> str:
+    """Render a Sortformer speaker ID as ``"Speaker N"`` when possible."""
+    if not isinstance(raw_label, str):
+        return f"Speaker {raw_label}"
+    s = raw_label.strip()
+    if s.startswith("speaker_"):
+        return f"Speaker {s[len('speaker_'):]}"
+    if s.isdigit():
+        return f"Speaker {s}"
+    # Chunked labels like "chunk0_speaker_1" — preserve the chunk scope.
+    if s.startswith("chunk") and "_speaker_" in s:
+        chunk_part, spk_part = s.split("_speaker_", 1)
+        return f"Speaker {chunk_part}-{spk_part}"
+    return s
 
 
 def _assign_speakers(result: object, diar_segments: List[DiarSegment]) -> None:
@@ -144,7 +138,7 @@ def _overlapping_diar_segments(
     """Return all diarization segments that overlap the given time range."""
     return [
         ds for ds in diar_segments
-        if _overlap(seg_start, seg_end, ds[1], ds[2]) > 0.0
+        if _overlap(seg_start, seg_end, ds[0], ds[1]) > 0.0
     ]
 
 
@@ -165,8 +159,8 @@ def _split_multi_speaker_segments(result: object, diar_segments: List[DiarSegmen
     for segment in result.segments:
         overlapping = _overlapping_diar_segments(segment.start, segment.end, diar_segments)
 
-        # Collect unique speakers that overlap this segment
-        unique_speakers = {ds[3] for ds in overlapping}
+        # Collect unique speakers that overlap this segment (by label).
+        unique_speakers = {ds[2] for ds in overlapping}
 
         # If zero or one speaker — no split needed
         if len(unique_speakers) <= 1:
@@ -248,8 +242,8 @@ def add_speaker_labels(result: object, audio_data: Union[str, bytes, bytearray],
     """Run speaker diarization and annotate transcription segments with speaker labels.
 
     This is the main entry point for diarization.  It:
-      1. Ensures the WeSpeaker model is loaded.
-      2. Runs diarization on the audio.
+      1. Ensures the Sortformer model is loaded.
+      2. Runs diarization on the audio (chunking long files automatically).
       3. Assigns speaker labels to each segment (maximum overlap).
       4. Splits segments that span a speaker-change boundary at word boundaries.
 
@@ -269,21 +263,21 @@ def add_speaker_labels(result: object, audio_data: Union[str, bytes, bytearray],
     temp_path: str | None = None
 
     try:
-        # Resolve audio to a file path for WeSpeaker
+        # Resolve audio to a file path for Sortformer
         if isinstance(audio_data, (bytes, bytearray)):
             temp_path = _write_temp_wav(audio_data)
             audio_path = temp_path
         else:
             audio_path = audio_data
 
-        logger.info("Running WeSpeaker diarization on %s", audio_path)
-        diar_segments: List[DiarSegment] = diarization_model_module.model.diarize(audio_path)
+        logger.info("Running Sortformer diarization on %s", audio_path)
+        diar_segments: List[DiarSegment] = _sortformer_diarize(audio_path)
 
         if not diar_segments:
-            logger.warning("WeSpeaker returned no diarization segments")
+            logger.warning("Sortformer returned no diarization segments")
             return 0
 
-        logger.info("WeSpeaker returned %d diarization segments", len(diar_segments))
+        logger.info("Sortformer returned %d diarization segments", len(diar_segments))
 
         # Assign speakers and split multi-speaker segments
         _assign_speakers(result, diar_segments)

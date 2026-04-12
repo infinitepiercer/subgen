@@ -10,24 +10,13 @@ watchdog
 langdetect
 argostranslate
 openai-whisper
-wespeaker @ git+https://github.com/wenet-e2e/wespeaker.git
-s3prl
-espnet
-# wespeaker declared deps (not always pulled by pip from git installs)
 PyYAML
-kaldiio
 scipy
 tqdm
 scikit-learn
 silero-vad
-hdbscan>=0.8.40
-umap-learn==0.5.6
 onnxruntime
-tableprint
-torchnet
 matplotlib
-lmdb
-# wespeaker undeclared deps (imported but not in its own requirements)
 peft
 transformers
 safetensors

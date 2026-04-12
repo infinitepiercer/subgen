@@ -62,7 +62,7 @@ ENV ASR_ENGINE=${ASR_ENGINE} \
     XDG_CACHE_HOME=/cache \
     HF_HOME=/cache/huggingface \
     MPLCONFIGDIR=/cache/matplotlib \
-    WESPEAKER_HOME=/cache/wespeaker \
+    NEMO_CACHE_DIR=/cache/nemo \
     PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["/entrypoint.sh"]

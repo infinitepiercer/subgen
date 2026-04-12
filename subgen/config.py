@@ -102,15 +102,19 @@ asr_timeout: int = int(os.getenv('ASR_TIMEOUT', 18000))
 filter_subtitles: bool = convert_to_bool(os.getenv('FILTER_SUBTITLES', False))
 enable_diarization: bool = convert_to_bool(os.getenv('ENABLE_DIARIZATION', False))
 diarization_model: str = os.getenv('DIARIZATION_MODEL', 'english')
+sortformer_model: str = os.getenv('SORTFORMER_MODEL', 'nvidia/diar_sortformer_4spk-v1')
+sortformer_max_speakers: int = int(os.getenv('SORTFORMER_MAX_SPEAKERS', '4'))
+sortformer_chunk_sec: int = int(os.getenv('SORTFORMER_CHUNK_SEC', '600'))
+diarization_backend: str = os.getenv('DIARIZATION_BACKEND', 'sortformer')
 
 # ---------------------------------------------------------------------------
 # Scene Detection Configuration
 # ---------------------------------------------------------------------------
 max_scene_duration: float = float(os.getenv('MAX_SCENE_DURATION', '30'))
 use_silero_vad: bool = convert_to_bool(os.getenv('USE_SILERO_VAD', True))
-silero_vad_threshold: float = float(os.getenv('SILERO_VAD_THRESHOLD', '0.08'))
-silero_min_silence_ms: int = int(os.getenv('SILERO_MIN_SILENCE_MS', '1500'))
-silero_min_speech_ms: int = int(os.getenv('SILERO_MIN_SPEECH_MS', '100'))
+silero_vad_threshold: float = float(os.getenv('SILERO_VAD_THRESHOLD', '0.05'))
+silero_min_silence_ms: int = int(os.getenv('SILERO_MIN_SILENCE_MS', '800'))
+silero_min_speech_ms: int = int(os.getenv('SILERO_MIN_SPEECH_MS', '80'))
 
 # ---------------------------------------------------------------------------
 # Skip Configuration - with backwards compatibility
