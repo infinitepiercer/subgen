@@ -1,7 +1,7 @@
 # === Stage 1: Build dependencies ===
 FROM python:3.11-slim-bullseye AS builder
 
-# Build arg: "whisper" (default) or "parakeet" (NeMo).
+# ASR_ENGINE is a runtime config; both whisper and parakeet deps are always installed.
 ARG ASR_ENGINE=whisper
 
 WORKDIR /build
@@ -25,12 +25,10 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --prefix=/install \
     -r /tmp/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Conditional NeMo installation for Parakeet backend
+# NeMo installation for Parakeet backend
 COPY requirements-parakeet.txt /tmp/requirements-parakeet.txt
-RUN if [ "$ASR_ENGINE" = "parakeet" ]; then \
-        pip install --no-cache-dir --prefix=/install \
-        -r /tmp/requirements-parakeet.txt --extra-index-url https://download.pytorch.org/whl/cpu ; \
-    fi
+RUN pip install --no-cache-dir --prefix=/install \
+    -r /tmp/requirements-parakeet.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
 # === Stage 2: Minimal runtime image ===
 FROM python:3.11-slim-bullseye AS runtime
