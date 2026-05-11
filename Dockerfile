@@ -115,5 +115,6 @@ RUN get -qO ffmpeg.tar.bz2 https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2 \
     && make -j$(nproc) \
     && make install
 
+EXPOSE 9000
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python3", "launcher.py"]
