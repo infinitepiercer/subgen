@@ -75,6 +75,45 @@ ENV ASR_ENGINE=${ASR_ENGINE} \
     NEMO_CACHE_DIR=/cache/nemo \
     PYTHONUNBUFFERED=1 \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    
+# Layer 5: Install dependencies to build FFmpeg
+RUN apt-get update && apt-get install -y \
+    wget \
+    build-essential \
+    pkg-config \
+    yasm \
+    nasm \
+    libssl-dev \
+    zlib1g-dev \
+    libx264-dev \
+    libx265-dev \
+    libvpx-dev \
+    libmp3lame-dev \
+    libopus-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and compile FFmpeg 6.0
+# --enable-shared is the CRITICAL flag to fix the R_X86_64_PC32 error
+RUN wget -qO ffmpeg.tar.bz2 https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2 \
+    && tar xjvf ffmpeg.tar.bz2 \
+    && cd ffmpeg-6 \
+    && ./configure \
+    --prefix=/usr/local \
+    --enable-shared \
+    --disable-static \
+    --disable-doc \
+    --disable-ffplay \
+    --enable-gpl \
+    --enable-nonfree \
+    --enable-version3 \
+    --enable-openssl \
+    --enable-libx264 \
+    --enable-libx265 \
+    --enable-libvpx \
+    --enable-libmp3lame \
+    --enable-libopus \
+    && make -j$(nproc) \
+    && make install
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python3", "launcher.py"]
