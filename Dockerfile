@@ -94,7 +94,7 @@ RUN apt-get update && apt-get install -y \
 
 # Download and compile FFmpeg 6.0
 # --enable-shared is the CRITICAL flag to fix the R_X86_64_PC32 error
-RUN wget -qO ffmpeg.tar.bz2 https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2 \
+RUN get -qO ffmpeg.tar.bz2 https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2 \
     && tar xjvf ffmpeg.tar.bz2 \
     && cd ffmpeg-6 \
     && ./configure \
