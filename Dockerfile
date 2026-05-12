@@ -113,7 +113,7 @@ RUN wget -qO ffmpeg.tar.bz2 https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2 \
     --enable-libmp3lame \
     --enable-libopus \
     && make -j$(nproc) \
-    && make install
+    && make install \
     && ldconfig
 
 EXPOSE 9000
