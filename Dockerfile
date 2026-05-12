@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.1.2-base-ubuntu22.04
+FROM nvidia/cuda:13.0.3-base-ubuntu22.04
 
 # ASR_ENGINE is a runtime config; both whisper and parakeet deps are always installed.
 ARG ASR_ENGINE=whisper
