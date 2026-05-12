@@ -26,11 +26,11 @@ jobs:
       - name: DockerHub Login
         uses: docker/login-action@v2.1.0
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build the Docker image
-        run: docker build . --file Dockerfile.gpu --tag ${{ secrets.DOCKERHUB_USERNAME }}/whisper
+        run: docker build . --file Dockerfile --tag ${{ secrets.DOCKER_USER }}/subgen
 
       - name: Docker Push
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/whisper
+        run: docker push ${{ secrets.DOCKER_USER }}/subgen
