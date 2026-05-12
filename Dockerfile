@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.3.2-base-ubuntu22.04
+FROM nvidia/cuda:13.1.2-base-ubuntu22.04
 
 # ASR_ENGINE is a runtime config; both whisper and parakeet deps are always installed.
 ARG ASR_ENGINE=whisper
@@ -15,7 +15,7 @@ RUN (apt-get update && \
 
 # Layer 2: PyTorch (~2.5GB, only changes on torch version bumps)
 RUN python3 -m pip install -U --no-cache-dir \
-    torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+    torch torchaudio --index-url https://download.pytorch.org/whl/cu130
 
 # Layer 3: Python dependencies (~500MB, only changes when requirements.txt changes)
 COPY requirements.txt /tmp/requirements.txt
@@ -37,7 +37,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
     # Ensure torchaudio matches installed torch version
     TORCH_VER=$(python3 -c "import torch; print(torch.__version__.split('+')[0])") && \
     pip install --no-cache-dir "torchaudio==${TORCH_VER}" \
-        --index-url https://download.pytorch.org/whl/cu124 || \
+        --index-url https://download.pytorch.org/whl/cu130 || \
     pip install --no-cache-dir torchaudio && \
     rm /tmp/requirements-parakeet.txt
 
