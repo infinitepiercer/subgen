@@ -94,9 +94,9 @@ RUN apt-get update && apt-get install -y \
 
 # Download and compile FFmpeg 6.0
 # --enable-shared is the CRITICAL flag to fix the R_X86_64_PC32 error
-RUN get -qO ffmpeg.tar.bz2 https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2 \
+RUN wget -qO ffmpeg.tar.bz2 https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2 \
     && tar xjvf ffmpeg.tar.bz2 \
-    && cd ffmpeg-6 \
+    && cd ffmpeg-6.0 \
     && ./configure \
     --prefix=/usr/local \
     --enable-shared \
@@ -114,6 +114,7 @@ RUN get -qO ffmpeg.tar.bz2 https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2 \
     --enable-libopus \
     && make -j$(nproc) \
     && make install
+    && ldconfig
 
 EXPOSE 9000
 ENTRYPOINT ["/entrypoint.sh"]
