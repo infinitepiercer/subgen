@@ -3,6 +3,13 @@ services:
       container_name: subgen
       tty: true
       image: mccloud/subgen
+      deploy:
+         resources:
+           reservations:
+             devices:
+               - driver: nvidia
+                 count: all
+                 capabilities: [gpu]
       environment:
          - "WHISPER_MODEL=medium"
          - "WHISPER_THREADS=4"
